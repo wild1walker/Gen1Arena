@@ -263,6 +263,11 @@ a lake on the open ocean.
     inland       -> Lake
     inside a cave -> Underwater
 
+Water outranks a town's recolour as well as the tileset. The eleven city maps
+carry OVERWORLD and resolve to `town`, so until 0.18.1 surfing off Cinnabar or
+fishing at Vermilion came up against the town's rooftops -- the town variant
+answered before the water rule was reached.
+
 The cave case comes first: Seafoam and Cerulean Cave have no sky, and the Sea
 backdrop is mostly sky.
 
@@ -392,7 +397,7 @@ it should not come back.
 
 ## Install
 
-Import `gen1arena-0.18.0.zip` via MODS -> Import mod .zip.
+Import `gen1arena-0.18.1.zip` via MODS -> Import mod .zip.
 Toggle with the mod's **BACKDROPS** option row.
 
 Three option rows:

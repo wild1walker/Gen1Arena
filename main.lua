@@ -321,7 +321,15 @@ local function pickBackdrop(battle, layout)
   -- A gym leader DOES take their town's colour -- the whole point is that
   -- Misty's gym is blue and Blaine's is red. The Elite Four, Giovanni and the
   -- Champion do not: their scenes are deliberately their own.
-  if variant and (kind == "leader" or not BOSS_KIND[kind]) then
+  --
+  -- Water is excluded for the same reason it outranks the tileset below. The
+  -- eleven city maps carry OVERWORLD and resolve to `town`, so without this a
+  -- Tentacool surfed into off Cinnabar came up against Cinnabar's rooftops --
+  -- the town variant answered before the water rule was ever reached. There is
+  -- no per-town water art for it to have meant instead: a variant folder holds
+  -- town, gym and gym-trainer scenes and nothing else.
+  if variant and not WATER_KIND[kind]
+      and (kind == "leader" or not BOSS_KIND[kind]) then
     local function tinted(name)
       return loadImage(layout, variant .. "/" .. name)
     end
