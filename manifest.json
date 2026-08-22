@@ -1,0 +1,17 @@
+{
+  "id": "gen1arena",
+  "name": "Gen1Arena",
+  "version": "0.18.0",
+  "api": 2,
+  "entry": "main.lua",
+  "profile": "content",
+  "category": "GRAPHICS",
+  "game_version": ">=0.1.37 <2.0.0",
+  "priority": 50,
+  "permissions": ["engine_internals"],
+  "affects_link": false,
+  "dependencies": [],
+  "optional_dependencies": [],
+  "conflicts": [],
+  "description": "2D image backdrops behind battles, chosen by map, tileset and encounter kind. Supports the OG 160x144 and WIDE 304x144 layouts. Purely presentational.", "author": "Wild"
+}

@@ -1,0 +1,9 @@
+# Generated backdrop art. Built locally from a source art pack; see
+# HANDOFF.md for why it is not committed here.
+assets/backdrops/
+
+# Intermediate output of palettize.py, consumed by convert.py.
+corrected/
+
+__pycache__/
+*.pyc
