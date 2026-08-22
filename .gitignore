@@ -1,9 +1,11 @@
-# Generated backdrop art. Built locally from a source art pack; see
-# HANDOFF.md for why it is not committed here.
-assets/backdrops/
-
 # Intermediate output of palettize.py, consumed by convert.py.
 corrected/
+
+# recolor.py regenerates per-town variants the lookup can never reach; only
+# the reachable subset is committed. See "What art ships" in the README.
+assets/backdrops/*/*/trainer_town.png
+assets/backdrops/*/*/leader.png
+assets/backdrops/*/*/tower.png
 
 __pycache__/
 *.pyc

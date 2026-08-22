@@ -7,16 +7,30 @@ By **Wild**.
 
 ## Credit -- required
 
-The bundled art comes from the **Battle Backgrounds Patch FR** for Pokemon
-FireRed. Its authors ask for credit if the patch is used:
+**None of the art in this repository was drawn for this mod.** Every backdrop
+under `assets/backdrops/` comes from the **Battle Backgrounds Patch FR** for
+Pokemon FireRed. Its authors ask for credit whenever the pack is used, and
+that request is the condition this repository ships under:
 
-> LibertyTwins, princess-phoenix, carchagui, aveontrainer, WesleyFG,
-> kWharever, worldslayer608, knizz
+> **LibertyTwins · princess-phoenix · carchagui · aveontrainer · WesleyFG ·
+> kWharever · worldslayer608 · knizz**
+
+If you use, fork or restyle this mod, or lift a single backdrop out of it,
+carry those names with it. What this mod adds is the selection logic and three
+mechanical passes -- a palette correction, a crop to the engine's two layouts,
+and per-town roof recolours. The composition, linework and colour choices in
+every scene are theirs. See **[CREDITS.md](CREDITS.md)** for the full
+statement.
+
+Only the subset of backdrops the mod actually loads is committed here, not the
+whole source pack -- see [What art ships](#what-art-ships).
 
 Note also that Gen1Recomp's mod rules forbid shipping ROM-derived content in a
 mod. Some of this pack is original fan art and some is FireRed-derived, and I
-can't tell which is which from the files. That's fine for your own install; if
-you ever want to publish this, the art has to be separated out or replaced.
+can't tell which is which from the files.
+
+Pokemon Red / Blue / FireRed are Nintendo / Creatures / GAME FREAK. This is an
+unofficial fan mod with no affiliation or endorsement.
 
 ## What got mapped
 
@@ -56,10 +70,7 @@ CEMETERY tileset and she still gets her own backdrop rather than the tower's.
 `OPP_RIVAL3` is the Champion and nothing else; RIVAL1 and RIVAL2 stay on
 whatever room they are fought in.
 
-**Unused:** none. All 20 backgrounds have a home., Snow, Snow Cave, Snow Mountain, Desert,
-Volcano, Space, Town. Kanto has nowhere for most of them. Volcano is the
-obvious candidate for a Cinnabar Gym override and Space for the Champion, but
-both need per-map or per-trainer selection, which this version does not do.
+**Unused:** none. All 20 backgrounds have a home.
 
 **`tower` deliberately diverges from FireRed.** Slot 13 is FireRed's Pokemon
 Tower scene, but the patch author drew it as an outdoor town view -- a paved
@@ -349,9 +360,39 @@ places the mistake was visible.
 - **White flashes.** Battle intro wipes and the hit-flash overlay still paint
   white, now over a backdrop instead of a white field.
 
+## What art ships
+
+`assets/backdrops/` holds only the images the mod can actually load, not the
+whole generated set and not the source pack. Two layouts, `og/` and `wide/`,
+each carrying:
+
+- **the 31 base slots** at the top level -- the slot table above, one PNG each
+- **`<town>/town.png`** for the ten town maps: Pallet, Viridian, Pewter,
+  Cerulean, Vermilion, Celadon, Fuchsia, Cinnabar, Saffron and Lavender
+- **`<town>/gym.png`** and **`<town>/trainer_gym.png`** for the eight towns
+  with a gym -- everywhere except Pallet and Lavender, which have none
+- **`indigo/plateau.png`**, the only map Indigo owns
+
+Everything else `recolor.py` emits is dropped, because the lookup in
+`pickBackdrop` can never reach it and the file is byte-identical to the one it
+would fall back to:
+
+| Dropped | Falls back to | Same image? |
+|---|---|---|
+| `<town>/trainer_town.png` | `<town>/town.png` | yes -- the town pass does not treat them differently |
+| `<town>/leader.png` | `<town>/gym.png` | yes -- `leader_gym` is never a filename, so the leader lands on the gym art either way |
+| `<town>/plateau.png` (all but Indigo) | -- | unreachable; no other town has a PLATEAU map |
+| `<town>/gym.png`, `trainer_gym.png` for Pallet, Lavender, Indigo | -- | unreachable; those three have no gym |
+| `<town>/tower.png` | root `tower.png` | **no, and that is the point.** The tower wears GRAYMON by tileset, not a town's roofs. Older builds emitted a Lavender-tinted `tower.png` that shadowed it; `recolor.py` no longer generates one |
+
+Re-running `recolor.py` will put the dropped files back. They are harmless --
+they resolve to the same picture -- but they do not need committing. The one
+exception is `<town>/tower.png`: the current `recolor.py` does not emit it, and
+it should not come back.
+
 ## Install
 
-Import `gen1arena-0.1.1.zip` via MODS -> Import mod .zip.
+Import `gen1arena-0.18.0.zip` via MODS -> Import mod .zip.
 Toggle with the mod's **BACKDROPS** option row.
 
 Three option rows:

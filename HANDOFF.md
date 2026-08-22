@@ -33,7 +33,21 @@ Squash before opening the PR if the history was made under a different name.
 If a reviewer asks who built it or why, the answer is that Wild built it. Do
 not elaborate.
 
-## Blocker to resolve before this can be merged anywhere public
+## The art question -- decided, not closed
+
+**Status: Wild's call is to ship the art the mod uses, with credit carried
+prominently.** That decision is recorded here so this section is not read as
+still-open. Everything below remains true and still governs anything further.
+
+What was done: only the backdrops `pickBackdrop` can actually reach are
+committed (see "What art ships" in the README), not the whole generated set
+and not the source pack. Credit sits at the top of the README and in
+`CREDITS.md`, and names every author of the pack.
+
+What is still true: the redistribution terms are not resolved, only credited.
+If one of the pack's authors objects, honour it. A PR to an upstream project
+is a separate decision from a repo of Wild's own, and the paragraphs below
+still apply to it.
 
 **The bundled art is not clearly redistributable.** It comes from the
 "Battle Backgrounds Patch FR" for Pokémon FireRed. Its authors ask for credit:
@@ -57,8 +71,8 @@ repository or a PR to an upstream project. Before opening a PR, do one of:
 - **Get explicit permission** from the pack's authors and record it.
 - **Replace the art** with something originally drawn or clearly licensed.
 
-Do not open a PR that commits `assets/backdrops/` to a public repo without
-resolving this. Raise it with Wild rather than deciding unilaterally.
+Do not open a PR to an upstream project that carries `assets/backdrops/`
+without resolving this. Raise it with Wild rather than deciding unilaterally.
 
 ## What is in this archive
 
@@ -69,7 +83,8 @@ resolving this. Raise it with Wild rather than deciding unilaterally.
     convert.py             GBA source art -> layout-correct backdrops
     palettize.py           chroma correction into ADVANCED's palette range
     recolor.py             per-town roof recolours, gym walls, tower GRAYMON
-    assets/backdrops/      generated art — see the blocker above
+    CREDITS.md             art credit, in full
+    assets/backdrops/      generated art — see the art question above
 
 ## Build order
 
