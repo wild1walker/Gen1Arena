@@ -1,0 +1,34 @@
+-- Sharing metadata (25-community-and-ecosystem.md 3.2).  Read by tooling
+-- and the manager detail pane; never by the loader's merge.
+return {
+  summary = "2D backdrops behind battles, picked by map, tileset and how the encounter started.",
+  author = "Wild",
+  tags = { "art", "battle", "backdrops", "backgrounds" },
+  differences = {
+    changed = {
+      "the white battle field is replaced by a backdrop, in both the OG 160x144 and WIDE 304x144 layouts",
+      "the backdrop follows the map: forest in Viridian Forest, cave in a cave, gym in a gym, town in a town",
+      "surfing and fishing show the water you are on -- sea on the open coast, lake inland, underwater in a cave",
+      "gym trainers and gym leaders get different scenes, as they do in FireRed",
+      "Giovanni, each Elite Four member and the Champion get a scene of their own, wherever they are fought",
+      "each Kanto town wears its own roof colours, read from the engine's overworld palettes",
+      "the Pokemon Tower is drained to GRAYMON, by tileset, so every CEMETERY map gets it",
+    },
+    added = { "mod options: BACKDROPS, DIAGNOSTIC and FIELD TEST" },
+    known = {
+      "built for ADVANCED -- backdrops bypass the palette bake, so OG / OG INV / CLASSIC put full-colour art behind four-shade sprites",
+      "on dark scenes (Cave, Forest) your own mon can read as a silhouette: Gen 1 back sprites use the white field for their light shades",
+      "battle intro wipes and the hit-flash still paint white, now over a backdrop",
+      "the tower and every Pokemon Center share one image, separated only by the GRAYMON pass",
+      "which routes count as open sea is hand-classified from Kanto's geography; nothing in the map data says",
+      "the underwater backdrop is unused -- Gen 1 has no Dive",
+    },
+  },
+  credits = {
+    { who = "LibertyTwins, princess-phoenix, carchagui, aveontrainer, WesleyFG, kWharever, worldslayer608, knizz",
+      for_ = "the Battle Backgrounds Patch FR -- every backdrop in this mod is their art, not mine. They ask for credit wherever it is used; carry these names with it." },
+    { who = "Gen1Recomp",
+      for_ = "data/palettes_gbc.lua, the overworld roof pairs the per-town recolours are taken from" },
+  },
+  compat = { engine = ">=0.1.37 <2.0.0", modApi = 2 },
+}
