@@ -1,0 +1,56 @@
+name: Tell the index
+
+# The index at wild1walker/Gen1Wild rebuilds its feed nightly, so a release cut
+# here is picked up within a day on its own.  This says so the moment the
+# release is published, which is the difference between this mod's card in
+# MODS > FIND MODS offering the new version now and offering it tomorrow.
+#
+# It is deliberately its own workflow rather than a step on the end of the
+# release job.  It keys on the release, not on how the release was made, so it
+# fires for one cut by hand or by `gh release create` exactly as it does for
+# one the release workflow built -- and it cannot fail a release that has
+# already been published.  Every mod repo carries this same file, unmodified:
+# which mod it is comes from the repository it is running in.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+# Nothing here touches this repository.
+permissions: {}
+
+concurrency:
+  group: tell-the-index
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask the index to rebuild its feed
+        # Cross-repository, so github.token cannot do it -- that one only ever
+        # reaches this repo.  INDEX_DISPATCH_TOKEN is a token that can reach
+        # Gen1Wild.  Without it this says so and stops rather than failing:
+        # the index's nightly rebuild is the fallback, and it is the same
+        # rebuild this would have asked for.
+        env:
+          GH_TOKEN: ${{ secrets.INDEX_DISPATCH_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::notice::No INDEX_DISPATCH_TOKEN secret is set, so the index was not told. It picks this release up on its next nightly rebuild."
+            exit 0
+          fi
+
+          jq -n \
+            --arg mod "${GITHUB_REPOSITORY##*/}" \
+            --arg version "${TAG#v}" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            '{event_type: "mod-released",
+              client_payload: {mod: $mod, version: $version, repository: $repository}}' \
+            | gh api repos/wild1walker/Gen1Wild/dispatches --input -
+
+          echo "Told the index that $GITHUB_REPOSITORY published ${TAG:-a release}."
