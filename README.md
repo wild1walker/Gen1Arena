@@ -1,7 +1,26 @@
-# Gen1Arena
+<p align="center">
+  <a href="https://wild1walker.github.io/Gen1Wild/"><img src="docs/banner.png" alt="Gen1Wild" width="400"></a>
+</p>
 
-2D image backdrops behind Gen1Recomp battles, selected by map, tileset and
-encounter kind. Works in both OG (160x144) and WIDE (304x144) layouts.
+<h1 align="center">Gen1Arena</h1>
+
+<p align="center">
+  <a href="https://wild1walker.github.io/Gen1Wild/"><img src="docs/lineup.png" alt="Check out my other mods!" width="880"></a>
+</p>
+
+<p align="center">
+  <b>2D image backdrops behind Gen1Recomp battles</b><br>
+  Selected by map, tileset and encounter kind. Works in both OG (160x144)
+  and WIDE (304x144) layouts.
+</p>
+
+<p align="center">
+  <img src="docs/scenes.png" alt="The terrain and room backdrops" width="900">
+</p>
+
+<p align="center"><i>Every image on this page is a file out of
+<code>assets/backdrops/</code>, scaled by a whole number and otherwise
+untouched.</i></p>
 
 By **Wild**.
 
@@ -31,6 +50,15 @@ can't tell which is which from the files.
 
 Pokemon Red / Blue / FireRed are Nintendo / Creatures / GAME FREAK. This is an
 unofficial fan mod with no affiliation or endorsement.
+
+## The two layouts
+
+The engine draws battles at either 160x144 or 304x144, and every backdrop
+ships cropped for both.
+
+<p align="center">
+  <img src="docs/layouts.png" alt="the same scene in the OG and WIDE layouts" width="720">
+</p>
 
 ## What got mapped
 
@@ -62,6 +90,10 @@ The right-hand column is what FireRed itself uses each scene for, per
 remaps most of them onto the Gym scene -- gym trainers, and all four Elite
 Four. These assignments restore the vanilla split instead, which is what the
 art was drawn for.
+
+<p align="center">
+  <img src="docs/bosses.png" alt="Giovanni, the Elite Four and the Champion" width="760">
+</p>
 
 Bosses are matched on trainer class, not map, so Giovanni keeps his scene in
 all three of his fights (Rocket Hideout, Silph 11F, Viridian Gym). A boss
@@ -184,11 +216,22 @@ water stays blue, paths and stone stay as they are. So that is what these
 recolours do. Earlier attempts at a full-scene tint were inventing a
 difference the game does not have.
 
+<p align="center">
+  <img src="docs/towns.png" alt="the ten town roof recolours" width="920"><br>
+  <i>The same plaza in all ten towns, cropped to the roofline.</i>
+</p>
+
 - **Town maps** -- the art's two roof browns are remapped onto that town's
   roof pair by luminance. The mask is hue+saturation: the only saturated warm
   colours in the town art are the roofs (hue 20/28, sat ~0.7), while tree
   green (146) and water blue (195/228) are far outside it and every
   structural colour sits below 0.35 saturation.
+<p align="center">
+  <img src="docs/gyms.png" alt="the eight gym wall recolours" width="900"><br>
+  <i>Walls rotate to the town's hue. The floor, the court lines and the Poke
+  Ball are byte-identical in every one.</i>
+</p>
+
 - **Gyms** -- walls only, rotated to the town's roof hue. The floor, court
   lines and Poke Ball are byte-identical in every gym, so the ball reads as
   the same ball everywhere. The gym mask is by **hue**, not position: the
@@ -366,6 +409,19 @@ places the mistake was visible.
   white, now over a backdrop instead of a white field.
 
 ## What art ships
+
+The sheets on this page are redrawn from the committed art by
+
+```sh
+python3 tools/make_showcase.py          # every sheet
+python3 tools/make_showcase.py towns    # ... or just the ones named
+```
+
+It needs `Pillow`, and fetches its label font from Google Fonts once into
+`tools/.cache/`, which is not committed. Nothing in a sheet is drawn,
+composited or touched up -- each tile is a crop of a file under
+`assets/backdrops/` at a whole-number scale.
+
 
 `assets/backdrops/` holds only the images the mod can actually load, not the
 whole generated set and not the source pack. Two layouts, `og/` and `wide/`,
