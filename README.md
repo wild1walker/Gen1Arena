@@ -1,6 +1,8 @@
 <p align="center">
-  <img src="docs/banner.png" alt="Gen1Arena" width="520">
+  <img src="docs/banner.png" alt="Gen1Wild" width="400">
 </p>
+
+<h1 align="center">Gen1Arena</h1>
 
 <p align="center">
   <b>2D image backdrops behind Gen1Recomp battles</b><br>
