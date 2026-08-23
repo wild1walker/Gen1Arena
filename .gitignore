@@ -9,3 +9,6 @@ assets/backdrops/*/*/tower.png
 
 __pycache__/
 *.pyc
+
+# fonts fetched by the tools in tools/, not vendored
+tools/.cache/
