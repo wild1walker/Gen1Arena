@@ -1,0 +1,154 @@
+name: Release
+
+# Packs the mod into an installable .zip and publishes it as a GitHub Release.
+#
+# Releases here used to be zipped by hand, which is how 0.18.1 came to be built
+# from a branch rather than from main.  Building it here means the archive is
+# whatever main actually says, and that it was checked before it went out.
+#
+# Archive layout: every mod file at the archive root, manifest.json included.
+# That is one of the two shapes the game accepts on MODS > Import mod .zip
+# (src/mods/LauncherMods.lua locateRoot: manifest at the root, or inside a
+# single top-level folder), and it is the shape 0.18.1 shipped.
+#
+# The version comes from manifest.json, so bumping the manifest is how a
+# release is cut.  A dispatch may name one explicitly and is refused if the
+# two disagree, so the tag can never say something the shipped manifest does
+# not.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without the v. Blank takes manifest.json's."
+        required: false
+        default: ""
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Work out the version, and refuse to disagree with the manifest
+        id: v
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          manifest="$(python3 -c "import json; print(json.load(open('manifest.json'))['version'])")"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${INPUT_VERSION:-$manifest}"
+          fi
+          if [ "$version" != "$manifest" ]; then
+            echo "::error::releasing $version, but manifest.json says $manifest"
+            exit 1
+          fi
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::$version is not X.Y.Z"; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "releasing $version"
+
+      - name: Refuse to clobber an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::Tag $TAG already exists. Bump manifest.json."
+            exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::Release $TAG already exists. Bump manifest.json."
+            exit 1
+          fi
+
+      - name: Check main.lua parses
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lua5.4
+          luac5.4 -p main.lua
+          echo "main.lua parses"
+
+      - name: Build the mod .zip
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          staging="$RUNNER_TEMP/pkg"
+          out="$GITHUB_WORKSPACE/dist"
+          rm -rf "$staging" "$out"
+          mkdir -p "$staging" "$out"
+
+          # Only what the mod needs at runtime.  The conversion scripts, the
+          # docs and the handoff notes stay in the repo -- this is what 0.18.1
+          # shipped, and there is no reason for an installed mod to carry them.
+          cp manifest.json main.lua mod.card CREDITS.md "$staging/"
+          cp -R assets "$staging/assets"
+
+          zip_path="$out/gen1arena-${VERSION}.zip"
+          (cd "$staging" && zip -qr "$zip_path" .)
+
+          # Read the manifest back out of the finished archive: proves it is at
+          # the root, where locateRoot looks, and that it says what the tag will.
+          unzip -p "$zip_path" manifest.json > "$RUNNER_TEMP/packed-manifest.json"
+          python3 - "$RUNNER_TEMP/packed-manifest.json" "$VERSION" <<'PY'
+          import json, sys
+          path, expected = sys.argv[1], sys.argv[2]
+          with open(path, encoding="utf-8") as fh:
+              manifest = json.load(fh)
+          if manifest["version"] != expected:
+              raise SystemExit(f"::error::packed manifest says {manifest['version']}, expected {expected}")
+          if not manifest.get("github"):
+              raise SystemExit("::error::packed manifest has no github field, so the game cannot offer updates for it")
+          print(f"manifest.json is at the archive root, reports {manifest['version']}, and declares {manifest['github']}")
+          PY
+
+          unzip -l "$zip_path" | tail -1
+          (cd "$out" && sha256sum gen1arena-*.zip > sha256sums.txt)
+          cat "$out/sha256sums.txt"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.v.outputs.version }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          prev="$(git tag -l 'v*' --sort=-v:refname | grep -v "^${TAG}$" | head -1 || true)"
+          range="${prev:+${prev}..}$GITHUB_SHA"
+          changes="$(git log --no-merges --pretty='- %s' "$range" | head -50 || true)"
+
+          notes=$'Download the .zip and install it from the game: MODS > Import mod .zip.'
+          if [ -n "$changes" ]; then
+            notes+=$'\n\n## Changes\n\n'"$changes"
+          fi
+          printf 'Release notes:\n%s\n' "$notes"
+
+          gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
+            --title "$VERSION" \
+            --notes "$notes" \
+            "dist/gen1arena-${VERSION}.zip" \
+            "dist/sha256sums.txt"
+
+          echo "Published release $TAG"
