@@ -13,5 +13,6 @@
   "dependencies": [],
   "optional_dependencies": [],
   "conflicts": [],
-  "description": "2D image backdrops behind battles, chosen by map, tileset and encounter kind. Supports the OG 160x144 and WIDE 304x144 layouts. Purely presentational.", "author": "Wild"
+  "description": "2D image backdrops behind battles, chosen by map, tileset and encounter kind. Supports the OG 160x144 and WIDE 304x144 layouts. Purely presentational.", "author": "Wild",
+  "github": "wild1walker/Gen1Arena"
 }
