@@ -24,6 +24,16 @@ on:
         required: false
         default: ""
   push:
+    branches: [main]
+    paths-ignore:
+      - '.github/**'
+      - '**.md'
+      # page furniture and the build scripts, none of which ship in the zip
+      - 'docs/**'
+      - 'tools/**'
+      - 'convert.py'
+      - 'palettize.py'
+      - 'recolor.py'
     tags: ['v*']
 
 permissions:
@@ -48,11 +58,10 @@ jobs:
         run: |
           set -euo pipefail
           manifest="$(python3 -c "import json; print(json.load(open('manifest.json'))['version'])")"
-          if [ "${{ github.event_name }}" = "push" ]; then
-            version="${GITHUB_REF_NAME#v}"
-          else
-            version="${INPUT_VERSION:-$manifest}"
-          fi
+          case "$GITHUB_REF" in
+            refs/tags/v*) version="${GITHUB_REF_NAME#v}" ;;
+            *)            version="${INPUT_VERSION:-$manifest}" ;;
+          esac
           if [ "$version" != "$manifest" ]; then
             echo "::error::releasing $version, but manifest.json says $manifest"
             exit 1
@@ -61,11 +70,22 @@ jobs:
             [0-9]*.[0-9]*.[0-9]*) ;;
             *) echo "::error::$version is not X.Y.Z"; exit 1 ;;
           esac
+          # A push to main that did not bump the manifest is not a release.
+          # Without this the clobber check below would fail every such push.
+          if [ "$GITHUB_REF" = "refs/heads/main" ] \
+             && git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "manifest.json is at $version and v$version is already released;"
+            echo "nothing to publish."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "release=true" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
           echo "releasing $version"
 
       - name: Refuse to clobber an existing release
+        if: steps.v.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.v.outputs.tag }}
@@ -81,6 +101,7 @@ jobs:
           fi
 
       - name: Check main.lua parses
+        if: steps.v.outputs.release == 'true'
         run: |
           set -euo pipefail
           sudo apt-get update -qq
@@ -89,6 +110,7 @@ jobs:
           echo "main.lua parses"
 
       - name: Build the mod .zip
+        if: steps.v.outputs.release == 'true'
         env:
           VERSION: ${{ steps.v.outputs.version }}
         run: |
@@ -127,6 +149,7 @@ jobs:
           cat "$out/sha256sums.txt"
 
       - name: Publish GitHub Release
+        if: steps.v.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.v.outputs.version }}
@@ -152,3 +175,15 @@ jobs:
             "dist/sha256sums.txt"
 
           echo "Published release $TAG"
+
+      - name: Note that nothing was released
+        if: steps.v.outputs.release != 'true'
+        run: |
+          set -euo pipefail
+          {
+            echo "### No release cut"
+            echo
+            echo "\`manifest.json\` is at a version that is already tagged, so"
+            echo "this push was checked but not published. Bump the manifest to"
+            echo "cut a release."
+          } >> "$GITHUB_STEP_SUMMARY"
