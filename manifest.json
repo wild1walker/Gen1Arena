@@ -3,6 +3,7 @@
   "name": "Gen1Arena",
   "version": "0.18.2",
   "api": 2,
+  "games": ["gen1"],
   "entry": "main.lua",
   "profile": "content",
   "category": "GRAPHICS",
