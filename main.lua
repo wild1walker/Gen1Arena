@@ -27,6 +27,31 @@ local mod = ...
 local OG_W, OG_H = 160, 144
 local WIDE_W, WIDE_H = 304, 144
 
+-- ------------------------------------------------------------ the dev rows
+--
+-- DIAGNOSTIC and FIELD TEST are maintenance tools, not settings.  One writes
+-- an audit of every map in the game to mod storage; the other paints the
+-- battlefield flat magenta.  Neither answers a question a player has, and
+-- FIELD TEST in particular is a trap on a shipped cart: the row says nothing
+-- about what it does, and flipping it to find out leaves every battle magenta
+-- until it is found again.
+--
+-- So they are only offered in developer mode -- POKEPORT_DEV=1, or
+-- --developer, which conf.lua stashes in this global before any mod loads.
+-- Nothing is lost: the person those two rows are for is the person already
+-- running the game that way, and both work there exactly as they always did.
+--
+-- Asked through this rather than straight off the option set, because rows
+-- that go away have to take their stored values with them.  A player who
+-- turned FIELD TEST on once to see what it did, and then took an update,
+-- would otherwise keep a magenta battlefield with no row left to turn it off.
+local DEV = _G.POKEPORT_DEV_MODE == true
+
+local function devOption(key)
+  if not DEV then return false end
+  return mod.options:get(key) and true or false
+end
+
 -- ---------------------------------------------------------------- assets
 
 local BACKDROP_DIR = "assets/backdrops/"
@@ -294,7 +319,7 @@ local function tilesetSlot(battle)
   local overworld = game and game.overworld
   local def = overworld and overworld.map and overworld.map.def
   local slot = slotFor(mapId, def)
-  if mod.options:get("diagnostic") and not seen[mapId or tileset] then
+  if devOption("diagnostic") and not seen[mapId or tileset] then
     seen[mapId or tileset] = true
     mod.log:info("map %s (tileset %s) -> %s", tostring(mapId), tileset,
       slot or "(unmapped, using default)")
@@ -415,7 +440,7 @@ local realRectangle = love.graphics.rectangle
 -- which meant anyone running the audit had to play through a magenta game to
 -- get it. Separate toggles: DIAGNOSTIC logs, FIELD TEST paints.
 local function paintField()
-  if mod.options:get("field_test") then
+  if devOption("field_test") then
     love.graphics.setColor(1, 0, 1, 1)
     realRectangle("fill", 0, 0, pendingW, pendingH)
     love.graphics.setColor(1, 1, 1, 1)
@@ -685,12 +710,19 @@ end
 
 -- --------------------------------------------------------------- options
 
-mod.options:define({
+local optionRows = {
   { key = "enabled", type = "toggle", label = "BACKDROPS", default = true },
   { key = "pic_paper", type = "toggle", label = "MON PAPER", default = true },
-  { key = "diagnostic", type = "toggle", label = "DIAGNOSTIC", default = false },
-  { key = "field_test", type = "toggle", label = "FIELD TEST", default = false },
-})
+}
+
+if DEV then
+  optionRows[#optionRows + 1] =
+    { key = "diagnostic", type = "toggle", label = "DIAGNOSTIC", default = false }
+  optionRows[#optionRows + 1] =
+    { key = "field_test", type = "toggle", label = "FIELD TEST", default = false }
+end
+
+mod.options:define(optionRows)
 
 -- Full audit: every map in the game, with the backdrop it resolves to and
 -- what kinds of battle it can host.
@@ -825,7 +857,7 @@ mod.events:on("game.ready", function(ev)
   else
     mod.log:warn("could not patch BattleState -- backdrops will not appear")
   end
-  if mod.options:get("diagnostic") then
+  if devOption("diagnostic") then
     local ok, err = pcall(audit, ev and ev.game)
     if not ok then mod.log:warn("audit failed: %s", tostring(err)) end
   end

@@ -147,8 +147,10 @@ it too. `port` (Vermilion dock) uses Beach.
 
 ### Auditing the whole game
 
-Turn on **DIAGNOSTIC** and load a save. (DIAGNOSTIC only logs -- it does not
-change what you see. The magenta test field is the separate FIELD TEST row.) At startup the mod walks **every map** in
+Run the game in developer mode (`POKEPORT_DEV=1`, or `--developer`), turn on
+**DIAGNOSTIC** and load a save. (DIAGNOSTIC only logs -- it does not change
+what you see. The magenta test field is the separate FIELD TEST row.) At
+startup the mod walks **every map** in
 `data.maps` and logs what battles it can host and what backdrop it resolves to:
 
     --- gen1arena audit: N maps ---
@@ -465,19 +467,29 @@ it should not come back.
 Import `gen1arena-0.18.1.zip` via MODS -> Import mod .zip.
 Toggle with the mod's **BACKDROPS** option row.
 
-Four option rows:
+Two option rows:
 
 - **BACKDROPS** -- on/off
 - **MON PAPER** -- lay the field shade back under a pic the matte hollowed
   out, so a pale mon is not a window onto the backdrop. Off leaves the pic
   exactly as the engine hands it over
+
+and two more in developer mode only (`POKEPORT_DEV=1`, or `--developer`):
+
 - **DIAGNOSTIC** -- logging and the startup audit; changes nothing on screen
 - **FIELD TEST** -- paints the battlefield flat magenta instead of the
   backdrop, to tell "patch never ran" apart from "patch ran, image lost"
 
+Those two are maintenance tools rather than settings, and the second is a trap
+on a shipped cart: the row does not say what it does, and finding out leaves
+every battle magenta until you find the row again. Outside developer mode they
+are not offered and not read, so a value left set in an older install cannot
+strand anyone.
+
 ## If it is still white
 
-Turn on the mod's **FIELD TEST** row and start a battle:
+Run the game in developer mode (`POKEPORT_DEV=1`, or `--developer`) so the row
+is offered, turn on the mod's **FIELD TEST** row and start a battle:
 
 - **Magenta field** -- the patch is running and the backdrop is being lost
   downstream (palette pass or canvas ordering). Tell me which layout and

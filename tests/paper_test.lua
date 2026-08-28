@@ -300,6 +300,44 @@ do
   eq(n, 0, "a hidden pic gets no paper")
 end
 
+-- ------- the dev rows are not in a player's face
+
+-- DIAGNOSTIC and FIELD TEST are maintenance tools, and FIELD TEST is a trap on
+-- a shipped cart: the row does not say what it does, and finding out leaves
+-- every battle magenta. Outside developer mode they are not offered -- and not
+-- READ either, so a value left set by an older install cannot strand anyone.
+
+do
+  local offered = {}
+  for key in pairs(defaults) do offered[key] = true end
+  check(offered.enabled, "BACKDROPS is offered to everyone")
+  check(offered.pic_paper, "and so is MON PAPER")
+  check(not offered.diagnostic, "DIAGNOSTIC is not offered outside dev mode")
+  check(not offered.field_test, "nor is FIELD TEST")
+end
+
+do
+  -- and in developer mode both come back, unchanged
+  _G.POKEPORT_DEV_MODE = true
+  local devDefaults = {}
+  local devMod = {
+    path = root,
+    log = setmetatable({}, { __index = function() return function() end end }),
+    options = {
+      define = function(_, list)
+        for _, o in ipairs(list) do devDefaults[o.key] = o.default end
+      end,
+      get = function(_, key) return devDefaults[key] end,
+    },
+    events = { on = function() end },
+  }
+  assert(loadfile(root .. "/main.lua"))(devMod)
+  check(devDefaults.diagnostic ~= nil, "developer mode offers DIAGNOSTIC")
+  check(devDefaults.field_test ~= nil, "and FIELD TEST")
+  check(devDefaults.field_test == false, "with the magenta field off to start")
+  _G.POKEPORT_DEV_MODE = nil
+end
+
 print(("%d/%d checks passed  (Gen1Arena paper)")
   :format(passed, passed + failed))
 os.exit(failed == 0 and 0 or 1)
