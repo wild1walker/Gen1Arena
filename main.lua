@@ -27,6 +27,31 @@ local mod = ...
 local OG_W, OG_H = 160, 144
 local WIDE_W, WIDE_H = 304, 144
 
+-- ------------------------------------------------------------ the dev rows
+--
+-- DIAGNOSTIC and FIELD TEST are maintenance tools, not settings.  One writes
+-- an audit of every map in the game to mod storage; the other paints the
+-- battlefield flat magenta.  Neither answers a question a player has, and
+-- FIELD TEST in particular is a trap on a shipped cart: the row says nothing
+-- about what it does, and flipping it to find out leaves every battle magenta
+-- until it is found again.
+--
+-- So they are only offered in developer mode -- POKEPORT_DEV=1, or
+-- --developer, which conf.lua stashes in this global before any mod loads.
+-- Nothing is lost: the person those two rows are for is the person already
+-- running the game that way, and both work there exactly as they always did.
+--
+-- Asked through this rather than straight off the option set, because rows
+-- that go away have to take their stored values with them.  A player who
+-- turned FIELD TEST on once to see what it did, and then took an update,
+-- would otherwise keep a magenta battlefield with no row left to turn it off.
+local DEV = _G.POKEPORT_DEV_MODE == true
+
+local function devOption(key)
+  if not DEV then return false end
+  return mod.options:get(key) and true or false
+end
+
 -- ---------------------------------------------------------------- assets
 
 local BACKDROP_DIR = "assets/backdrops/"
@@ -294,7 +319,7 @@ local function tilesetSlot(battle)
   local overworld = game and game.overworld
   local def = overworld and overworld.map and overworld.map.def
   local slot = slotFor(mapId, def)
-  if mod.options:get("diagnostic") and not seen[mapId or tileset] then
+  if devOption("diagnostic") and not seen[mapId or tileset] then
     seen[mapId or tileset] = true
     mod.log:info("map %s (tileset %s) -> %s", tostring(mapId), tileset,
       slot or "(unmapped, using default)")
@@ -415,7 +440,7 @@ local realRectangle = love.graphics.rectangle
 -- which meant anyone running the audit had to play through a magenta game to
 -- get it. Separate toggles: DIAGNOSTIC logs, FIELD TEST paints.
 local function paintField()
-  if mod.options:get("field_test") then
+  if devOption("field_test") then
     love.graphics.setColor(1, 0, 1, 1)
     realRectangle("fill", 0, 0, pendingW, pendingH)
     love.graphics.setColor(1, 1, 1, 1)
@@ -449,6 +474,155 @@ local function rectangleShim(mode, x, y, w, h, ...)
     return
   end
   return realRectangle(mode, x, y, w, h, ...)
+end
+
+-- ------------------------------------------------------- the paper behind
+
+-- Gen 1 pics are matted: the extractor floods colour 0 (white) in from the
+-- image border and turns it transparent (ImageWriter.matteColor0), so a pic
+-- can sit on a non-white surface without a white box around it.  The flood is
+-- 4-connected and stops only at ink, so wherever a mon's own white touches
+-- the edge of the box -- or reaches it through a gap in the outline -- the
+-- flood pours into the BODY and hollows it out.  On hardware that is
+-- invisible: the field behind is the same white, so a hollow pic and a solid
+-- one look identical.  Put a backdrop there instead and the hole is a window.
+--
+-- It is worst exactly where it is least wanted.  A pale mon is nearly all
+-- colour 0, so almost nothing of it survives the flood: Mew's back pic keeps
+-- 145 of the 400 pixels in its own bounding box and reads as a bare outline
+-- with the lava showing through it.  A dark mon keeps its body and is fine.
+-- That is why it is SOME POKéMON and not all of them, and why it looks like
+-- the mon went invisible rather than like the mod drew it wrong.
+--
+-- So put the paper back, under the pic and nowhere else: fill the pic's own
+-- content box with the field shade it was matted against, then let the engine
+-- draw the pic over it.  That is the composition the Game Boy showed, and the
+-- box is the mon's own bounding box rather than the whole 32x32 or 56x56 pic
+-- rect, so it is as tight as the art allows.
+--
+-- Only pics that ACTUALLY lost something get it, which keeps this off every
+-- surface that does not need it:
+--
+--   * more than 4 opaque colours means true-colour art -- a sprite mod's
+--     Crystal replacement, which carries its own honest alpha and must not be
+--     boxed.  A four-shade pic, plain or palette-baked, is the matted kind.
+--   * under 30% of the content box transparent means the flood took nothing
+--     but the corners of a round mon.  Measured art splits cleanly here:
+--     unmatted mod pics score 0.00, and the matted pics that break score
+--     0.47 (a front) and 0.64 (Mew's back).
+--
+-- Measured once per image and cached weakly, so a species costs one readback
+-- the first time it is on screen and nothing after that.
+local PAPER_MAX_COLORS = 4
+local PAPER_MIN_HOLLOW = 0.30
+local PAPER_MAX_SIDE = 128
+
+local paperBox = setmetatable({}, { __mode = "k" })
+
+-- The pic's pixels, read back off a scratch canvas.  LOVE hands out no way to
+-- read an Image directly, and the mod never sees the path the engine loaded
+-- it from, so the picture has to be drawn to be looked at.  "replace" so the
+-- alpha arrives exactly as the pic carries it rather than blended.
+local function readPic(img)
+  local canvas = love.graphics.newCanvas(img:getWidth(), img:getHeight())
+  local prevCanvas = love.graphics.getCanvas()
+  local pr, pg, pb, pa = love.graphics.getColor()
+  local prevShader = love.graphics.getShader()
+  local prevBlend, prevAlpha = love.graphics.getBlendMode()
+  love.graphics.setCanvas(canvas)
+  love.graphics.clear(0, 0, 0, 0)
+  love.graphics.setShader()
+  love.graphics.setBlendMode("replace")
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.draw(img, 0, 0)
+  love.graphics.setCanvas(prevCanvas)
+  love.graphics.setBlendMode(prevBlend, prevAlpha)
+  love.graphics.setShader(prevShader)
+  love.graphics.setColor(pr, pg, pb, pa)
+  return canvas:newImageData()
+end
+
+local function measurePic(img)
+  local w, h = img:getDimensions()
+  if w < 1 or h < 1 or w > PAPER_MAX_SIDE or h > PAPER_MAX_SIDE then
+    return false
+  end
+  local data = readPic(img)
+  local minX, minY, maxX, maxY = w, h, -1, -1
+  local opaque, colors, nColors = 0, {}, 0
+  for y = 0, h - 1 do
+    for x = 0, w - 1 do
+      local r, g, b, a = data:getPixel(x, y)
+      if a > 0.5 then
+        opaque = opaque + 1
+        if x < minX then minX = x end
+        if x > maxX then maxX = x end
+        if y < minY then minY = y end
+        if y > maxY then maxY = y end
+        if nColors <= PAPER_MAX_COLORS then
+          local key = math.floor(r * 255 + 0.5) * 65536
+                    + math.floor(g * 255 + 0.5) * 256
+                    + math.floor(b * 255 + 0.5)
+          if not colors[key] then
+            colors[key] = true
+            nColors = nColors + 1
+          end
+        end
+      end
+    end
+  end
+  if maxX < minX or nColors > PAPER_MAX_COLORS then return false end
+  local bw, bh = maxX - minX + 1, maxY - minY + 1
+  if 1 - opaque / (bw * bh) < PAPER_MIN_HOLLOW then return false end
+  return { x = minX, y = minY, w = bw, h = bh }
+end
+
+local function picPaperBox(img)
+  if paperBox[img] == nil then
+    local ok, box = pcall(measurePic, img)
+    paperBox[img] = (ok and box) or false
+    if not ok then
+      mod.log:warn("could not measure a pic for its paper: %s", tostring(box))
+    end
+  end
+  return paperBox[img] or nil
+end
+
+-- Whether drawBattlerPic is about to draw the pic whole, at the x/y/scale it
+-- was handed.  Every other path it can take -- the substitute doll, the faint
+-- sink, a minimize blob, an fx offset -- draws something else or somewhere
+-- else, and paper laid at the base position would sit behind none of it.  A
+-- fade is the one exception: same pic, same place, just dimmer.
+local function drawsPlainPic(battle, battler)
+  if battler.fainted then return false end
+  local faintFx = false
+  if type(battle.fxFaintActive) == "function" then
+    local ok, active = pcall(battle.fxFaintActive, battle, battler)
+    faintFx = ok and active or false
+  end
+  if faintFx then return false end
+  if battler.substituteHP then return false end
+  local pf = battle.picFx and battle.picFx[battler]
+  if not pf then return true end
+  if pf.fade then return true end
+  if pf.kind or pf.hidden or pf.minimized then return false end
+  return (pf.ox or 0) == 0 and (pf.oy or 0) == 0
+end
+
+-- White, because that is the shade the engine's own field fill lays down and
+-- the shade the pic was matted against.  It goes onto the same canvas the pic
+-- does, so the zone pass shades the paper and the mon together and the patch
+-- lands on the display mode's paper rather than beside it.
+local function drawPicPaper(battle, battler, x, y, scale)
+  local img = battle:picImage(battler.sprite)
+  if not img then return end
+  local box = picPaperBox(img)
+  if not box then return end
+  local r, g, b, a = love.graphics.getColor()
+  love.graphics.setColor(1, 1, 1, a)
+  realRectangle("fill", x + box.x * scale, y + box.y * scale,
+                box.w * scale, box.h * scale)
+  love.graphics.setColor(r, g, b, a)
 end
 
 -- One wrapper for both layouts.  `surface` gives the dimensions of the fill
@@ -499,6 +673,35 @@ local function install()
     BattleState.drawClassic = wrap(classic, OG_W, OG_H, "og")
   end
 
+  -- The paper under the pics.  Wrapped here rather than shimmed inside the
+  -- draw because this is the one call both layouts and both sides go through
+  -- for a mon that is simply standing there, and it arrives with the battler,
+  -- the placement and the scale already resolved -- so the paper lands where
+  -- the pic is going to land, at whatever size the engine picked, with no
+  -- second copy of backPlacement here to drift out of step with the engine's.
+  --
+  -- `consumed` gates it: paper is only wanted where a backdrop actually
+  -- replaced the field this frame.  With BACKDROPS off, or on a battle no
+  -- slot answered, the engine's own white field is still there and there is
+  -- nothing to put back.
+  local battlerPic = BattleState.drawBattlerPic
+  if battlerPic then
+    BattleState.drawBattlerPic = function(self, battler, x, y, scale)
+      if active and consumed and battler
+         and mod.options:get("pic_paper") then
+        local ok, err = pcall(function()
+          if drawsPlainPic(self, battler) then
+            drawPicPaper(self, battler, x, y, scale or 1)
+          end
+        end)
+        if not ok then
+          mod.log:warn("the pic paper was not laid: %s", tostring(err))
+        end
+      end
+      return battlerPic(self, battler, x, y, scale)
+    end
+  end
+
   if ok_wb and WideBattle and WideBattle.draw then
     local wide = WideBattle.draw
     WideBattle.draw = wrap(wide, WIDE_W, WIDE_H, "wide")
@@ -507,11 +710,19 @@ end
 
 -- --------------------------------------------------------------- options
 
-mod.options:define({
+local optionRows = {
   { key = "enabled", type = "toggle", label = "BACKDROPS", default = true },
-  { key = "diagnostic", type = "toggle", label = "DIAGNOSTIC", default = false },
-  { key = "field_test", type = "toggle", label = "FIELD TEST", default = false },
-})
+  { key = "pic_paper", type = "toggle", label = "MON PAPER", default = true },
+}
+
+if DEV then
+  optionRows[#optionRows + 1] =
+    { key = "diagnostic", type = "toggle", label = "DIAGNOSTIC", default = false }
+  optionRows[#optionRows + 1] =
+    { key = "field_test", type = "toggle", label = "FIELD TEST", default = false }
+end
+
+mod.options:define(optionRows)
 
 -- Full audit: every map in the game, with the backdrop it resolves to and
 -- what kinds of battle it can host.
@@ -646,7 +857,7 @@ mod.events:on("game.ready", function(ev)
   else
     mod.log:warn("could not patch BattleState -- backdrops will not appear")
   end
-  if mod.options:get("diagnostic") then
+  if devOption("diagnostic") then
     local ok, err = pcall(audit, ev and ev.game)
     if not ok then mod.log:warn("audit failed: %s", tostring(err)) end
   end

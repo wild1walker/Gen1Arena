@@ -1,0 +1,42 @@
+name: Test
+
+# The mod's own suite. It stubs LOVE outright and builds its pic fixtures in
+# the test file, so it needs no engine checkout, no ROM and no assets -- which
+# is why it is a job of its own rather than a step bolted onto the release.
+#
+# Deliberately NOT a gate on release.yml, for the same reason the rest of the
+# set keeps them apart: a release is cut from a push to main, and a red run
+# here is a signal to yank rather than a lock on the button.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'mod.card'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LuaJIT
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y luajit
+
+      - name: Run the suite
+        run: |
+          set -euo pipefail
+          for suite in tests/*_test.lua; do
+            echo "== $suite"
+            luajit "$suite"
+          done

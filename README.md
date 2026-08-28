@@ -147,8 +147,10 @@ it too. `port` (Vermilion dock) uses Beach.
 
 ### Auditing the whole game
 
-Turn on **DIAGNOSTIC** and load a save. (DIAGNOSTIC only logs -- it does not
-change what you see. The magenta test field is the separate FIELD TEST row.) At startup the mod walks **every map** in
+Run the game in developer mode (`POKEPORT_DEV=1`, or `--developer`), turn on
+**DIAGNOSTIC** and load a save. (DIAGNOSTIC only logs -- it does not change
+what you see. The magenta test field is the separate FIELD TEST row.) At
+startup the mod walks **every map** in
 `data.maps` and logs what battles it can host and what backdrop it resolves to:
 
     --- gen1arena audit: N maps ---
@@ -398,10 +400,19 @@ places the mistake was visible.
 - **Underwater art is unused.** Gen 1 has no Dive; the engine rolls exactly
   three terrains (grass, water, indoor) plus fishing pools. There is nowhere
   to put it.
-- **Back-sprite contrast.** Gen 1 back sprites use the white paper field for
-  their light shades. On the darker backdrops (Cave, Forest) your own mon may
-  read as a silhouette. The fix is masking the pic rects back to paper before
-  the backdrop draws -- not implemented, pending a case where it matters.
+- **Back-sprite contrast** -- fixed in 0.19.0 by **MON PAPER**, on by default.
+  Gen 1 pics are matted: the extractor floods colour 0 in from the edge of the
+  pic and turns it transparent, and because the flood stops only at ink it
+  pours through any gap in a mon's outline and hollows out the body behind it.
+  Against the white field that is invisible; against a backdrop it is a window,
+  and a pale mon -- Mew's back pic keeps 145 of the 400 pixels in its own
+  bounding box -- reads as a bare outline with the scenery showing through.
+  MON PAPER fills the pic's own content box with the field shade before the
+  engine draws it, which is the composition the Game Boy showed. Only pics that
+  actually lost something get it: four-shade art with more than 30% of its
+  content box transparent. A sprite mod's true-colour replacement carries its
+  own alpha and is left alone, so a Crystal front and a vanilla back in the
+  same battle are each treated correctly.
 - **Palette modes.** Backdrops bypass the palette bake, so they do not shift
   with COLORS. In OG / OG INV / CLASSIC you get full-colour GBA art behind
   four-shade sprites. Check it in ADVANCED first.
@@ -456,16 +467,29 @@ it should not come back.
 Import `gen1arena-0.18.1.zip` via MODS -> Import mod .zip.
 Toggle with the mod's **BACKDROPS** option row.
 
-Three option rows:
+Two option rows:
 
 - **BACKDROPS** -- on/off
+- **MON PAPER** -- lay the field shade back under a pic the matte hollowed
+  out, so a pale mon is not a window onto the backdrop. Off leaves the pic
+  exactly as the engine hands it over
+
+and two more in developer mode only (`POKEPORT_DEV=1`, or `--developer`):
+
 - **DIAGNOSTIC** -- logging and the startup audit; changes nothing on screen
 - **FIELD TEST** -- paints the battlefield flat magenta instead of the
   backdrop, to tell "patch never ran" apart from "patch ran, image lost"
 
+Those two are maintenance tools rather than settings, and the second is a trap
+on a shipped cart: the row does not say what it does, and finding out leaves
+every battle magenta until you find the row again. Outside developer mode they
+are not offered and not read, so a value left set in an older install cannot
+strand anyone.
+
 ## If it is still white
 
-Turn on the mod's **FIELD TEST** row and start a battle:
+Run the game in developer mode (`POKEPORT_DEV=1`, or `--developer`) so the row
+is offered, turn on the mod's **FIELD TEST** row and start a battle:
 
 - **Magenta field** -- the patch is running and the backdrop is being lost
   downstream (palette pass or canvas ordering). Tell me which layout and
