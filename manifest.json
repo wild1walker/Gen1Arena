@@ -1,7 +1,7 @@
 {
   "id": "gen1arena",
   "name": "Gen1Arena",
-  "version": "0.20.0",
+  "version": "0.20.1",
   "api": 2,
   "games": ["gen1"],
   "entry": "main.lua",

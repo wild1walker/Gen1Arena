@@ -474,7 +474,8 @@ Two option rows:
   out, so a pale mon is not a window onto the backdrop. Off leaves the pic
   exactly as the engine hands it over
 
-and two more in developer mode only (`POKEPORT_DEV=1`, or `--developer`):
+and two more in developer mode only (`POKEPORT_DEV=1`, or `--developer`,
+which the engine resolves once and hands each mod as `mod.developer`):
 
 - **DIAGNOSTIC** -- logging and the startup audit; changes nothing on screen
 - **FIELD TEST** -- paints the battlefield flat magenta instead of the
