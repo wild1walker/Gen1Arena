@@ -172,6 +172,9 @@ _G.love = {
 local defaults = {}
 local mod = {
   path = root,
+  -- what the loader hands a mod: the environment resolved once, copied on as
+  -- plain data.  A sandboxed mod cannot read POKEPORT_DEV_MODE itself.
+  developer = false,
   log = setmetatable({}, { __index = function() return function() end end }),
   options = {
     define = function(_, list)
@@ -318,10 +321,10 @@ end
 
 do
   -- and in developer mode both come back, unchanged
-  _G.POKEPORT_DEV_MODE = true
   local devDefaults = {}
   local devMod = {
     path = root,
+    developer = true,
     log = setmetatable({}, { __index = function() return function() end end }),
     options = {
       define = function(_, list)
@@ -335,7 +338,6 @@ do
   check(devDefaults.diagnostic ~= nil, "developer mode offers DIAGNOSTIC")
   check(devDefaults.field_test ~= nil, "and FIELD TEST")
   check(devDefaults.field_test == false, "with the magenta field off to start")
-  _G.POKEPORT_DEV_MODE = nil
 end
 
 print(("%d/%d checks passed  (Gen1Arena paper)")

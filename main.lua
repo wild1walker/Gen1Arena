@@ -37,15 +37,24 @@ local WIDE_W, WIDE_H = 304, 144
 -- until it is found again.
 --
 -- So they are only offered in developer mode -- POKEPORT_DEV=1, or
--- --developer, which conf.lua stashes in this global before any mod loads.
--- Nothing is lost: the person those two rows are for is the person already
--- running the game that way, and both work there exactly as they always did.
+-- --developer.  Nothing is lost: the person those two rows are for is the
+-- person already running the game that way, and both work there exactly as
+-- they always did.
+--
+-- mod.developer is the engine's own answer, and the only one reachable from
+-- here.  A mod runs in a sandbox whose `_G` is its own table
+-- (src/mods/Sandbox.lua sets env._G = env) and whose `os` is four clock
+-- functions, so neither the POKEPORT_DEV_MODE global nor os.getenv can be
+-- seen from inside one -- reading the global answers nil for everybody,
+-- developer included, which is a row nobody can reach rather than a row a
+-- player cannot.  The loader resolves the environment once at construction
+-- and copies the verdict onto the handle as plain data, for exactly this.
 --
 -- Asked through this rather than straight off the option set, because rows
 -- that go away have to take their stored values with them.  A player who
 -- turned FIELD TEST on once to see what it did, and then took an update,
 -- would otherwise keep a magenta battlefield with no row left to turn it off.
-local DEV = _G.POKEPORT_DEV_MODE == true
+local DEV = mod.developer == true
 
 local function devOption(key)
   if not DEV then return false end
