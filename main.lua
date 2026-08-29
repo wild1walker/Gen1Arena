@@ -533,11 +533,24 @@ local paperBox = setmetatable({}, { __mode = "k" })
 -- it from, so the picture has to be drawn to be looked at.  "replace" so the
 -- alpha arrives exactly as the pic carries it rather than blended.
 local function readPic(img)
-  local canvas = love.graphics.newCanvas(img:getWidth(), img:getHeight())
+  local w, h = img:getDimensions()
+  local canvas = love.graphics.newCanvas(w, h)
   local prevCanvas = love.graphics.getCanvas()
-  local pr, pg, pb, pa = love.graphics.getColor()
-  local prevShader = love.graphics.getShader()
-  local prevBlend, prevAlpha = love.graphics.getBlendMode()
+  -- push("all") carries the colour, blend mode, shader and scissor; the canvas
+  -- is not part of that state, so it is saved and put back by hand.
+  love.graphics.push("all")
+  -- ORIGIN IS LOAD-BEARING.  This runs inside the battle draw, where the
+  -- engine has a translate and a scale in effect for the letterboxed surface,
+  -- and a draw at 0,0 under that transform lands somewhere other than 0,0 --
+  -- mostly outside a canvas the size of one pic.  Measuring what came back
+  -- then answered on a handful of stray pixels: too few colours, so
+  -- full-colour replacement art passed the four-shade test, and mostly empty,
+  -- so it passed the hollow test as well.  The result was paper laid under a
+  -- Crystal sprite that needed none, in a box that was not where the sprite
+  -- was.  The scissor goes for the same reason: the battle clips to its own
+  -- rect, and a clip in outer coordinates would cut this canvas to nothing.
+  love.graphics.origin()
+  love.graphics.setScissor()
   love.graphics.setCanvas(canvas)
   love.graphics.clear(0, 0, 0, 0)
   love.graphics.setShader()
@@ -545,9 +558,7 @@ local function readPic(img)
   love.graphics.setColor(1, 1, 1, 1)
   love.graphics.draw(img, 0, 0)
   love.graphics.setCanvas(prevCanvas)
-  love.graphics.setBlendMode(prevBlend, prevAlpha)
-  love.graphics.setShader(prevShader)
-  love.graphics.setColor(pr, pg, pb, pa)
+  love.graphics.pop()
   return canvas:newImageData()
 end
 

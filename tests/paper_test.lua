@@ -125,6 +125,16 @@ local rects = {}            -- every love.graphics.rectangle call, in order
 local currentCanvas = nil
 local color = { 1, 1, 1, 1 }
 
+-- The engine draws the battle under a translate and a scale for the
+-- letterboxed surface, and clips to it.  The mod measures a pic by drawing it
+-- into a scratch canvas of its own, which only lands at 0,0 if that transform
+-- is reset first -- so the stub models the transform rather than ignoring it.
+-- Without it this suite cannot see the difference between a readback that
+-- works and one that reads a handful of stray pixels, which is exactly how a
+-- white box behind a Crystal sprite shipped.
+local transformed = false
+local stack = {}
+
 local function newImageData(px, w, h)
   return {
     getPixel = function(_, x, y)
@@ -146,6 +156,12 @@ _G.love = {
     getCanvas = function() return currentCanvas end,
     setCanvas = function(c) currentCanvas = c end,
     clear = function() end,
+    push = function() stack[#stack + 1] = transformed end,
+    pop = function() transformed = table.remove(stack) end,
+    origin = function() transformed = false end,
+    translate = function() transformed = true end,
+    scale = function() transformed = true end,
+    setScissor = function() end,
     getColor = function() return color[1], color[2], color[3], color[4] end,
     setColor = function(r, g, b, a)
       color = { r or 1, g or 1, b or 1, a or 1 }
@@ -158,6 +174,9 @@ _G.love = {
     -- canvas's pixels, which is the only property the measurement relies on
     draw = function(img, ...)
       if currentCanvas and currentCanvas.__canvas and img and img.px then
+        -- under the battle's transform a draw at 0,0 lands off a canvas this
+        -- small, so nothing arrives -- which is what the bug actually saw
+        if transformed then return end
         currentCanvas.px = img.px
       end
     end,
@@ -194,9 +213,13 @@ function BattleState:drawBattlerPic(battler, x, y, scale)
   self.drewPic = { battler = battler, x = x, y = y, scale = scale }
 end
 function BattleState:drawClassic()
+  -- the engine's own letterbox transform is up for the whole battle draw
+  love.graphics.translate(24, 16)
+  love.graphics.scale(3, 3)
   -- the field fill the mod substitutes its backdrop for
   love.graphics.rectangle("fill", 0, 0, 160, 144)
   self:drawBattlerPic(self.player, 8, 40, 2)
+  love.graphics.origin()
 end
 package.loaded["src.battle.BattleState"] = BattleState
 package.loaded["src.battle.WideBattle"] = nil
