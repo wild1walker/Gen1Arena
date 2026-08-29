@@ -76,7 +76,7 @@ local function newPic(rows, extraColors)
 end
 
 -- A pale mon after the matte flood: an outline with the body eaten out.
-local HOLLOW = newPic({
+local HOLLOW_ROWS = {
   "..######..",
   ".#......#.",
   "#........#",
@@ -87,11 +87,12 @@ local HOLLOW = newPic({
   "#........#",
   ".#......#.",
   "..######..",
-})
+}
+local HOLLOW = newPic(HOLLOW_ROWS)
 
 -- The same silhouette with its body intact: nothing was lost, so nothing is
 -- owed back.
-local SOLID = newPic({
+local SOLID_ROWS = {
   "..######..",
   ".#wwwwww#.",
   "#wwoowwww#",
@@ -102,7 +103,44 @@ local SOLID = newPic({
   "#wwwwwwww#",
   ".#wwwwww#.",
   "..######..",
-})
+}
+local SOLID = newPic(SOLID_ROWS)
+
+-- An undamaged mon with an awkward silhouette: a body with a plume coming off
+-- it, the way a Crystal Koffing's gas is.  Most of its bounding box is empty
+-- and none of that emptiness is a hole -- so by "how much of the box is not
+-- ink" it looks as eaten as the outline above, and it is not eaten at all.
+-- The real frames this stands for score 0.51 by that measure and 0.00 by the
+-- one the mod uses.
+local PLUME_ROWS = {
+  "....##....",
+  "....##....",
+  "...#o#....",
+  "...#o#....",
+  ".########.",
+  "#oooooooo#",
+  "#oooooooo#",
+  "#oooooooo#",
+  ".########.",
+  "..######..",
+}
+local PLUME = newPic(PLUME_ROWS)
+
+-- The damage the paper is for, in a shape nothing else about it looks odd:
+-- a solid body with the flood having eaten a window through the middle.
+local WINDOW_ROWS = {
+  "..######..",
+  ".#oooooo#.",
+  "#o......o#",
+  "#........#",
+  "#........#",
+  "#........#",
+  "#........#",
+  "#o......o#",
+  ".#oooooo#.",
+  "..######..",
+}
+local WINDOW = newPic(WINDOW_ROWS)
 
 -- A sprite mod's replacement: hollow-looking by the same measure, but in full
 -- colour, so its alpha is its own and honest.
@@ -137,6 +175,7 @@ local stack = {}
 
 local function newImageData(px, w, h)
   return {
+    getDimensions = function() return w, h end,
     getPixel = function(_, x, y)
       local p = px[y + 1] and px[y + 1][x + 1]
       if not p then return 0, 0, 0, 0 end
@@ -145,12 +184,29 @@ local function newImageData(px, w, h)
   }
 end
 
+-- The window's DPI scale, which love.graphics.newCanvas takes unless it is
+-- told otherwise.  1 on a desktop -- which is why measuring a corner of the
+-- pic and calling it the mon shipped twice -- and 3 on the phone the white
+-- box was photographed on.
+--
+-- `ignorePin` is a host that takes the size and disregards the dpiscale
+-- setting.  The measurement is supposed to survive that too, by reading what
+-- actually came back instead of what it asked for.
+local dpiScale = 1
+local ignorePin = false
+
 _G.love = {
   graphics = {
     newImage = function(path) return newPic({ "w" }) end,
-    newCanvas = function(w, h)
-      local c = { w = w, h = h, px = {}, __canvas = true }
-      function c:newImageData() return newImageData(self.px, self.w, self.h) end
+    newCanvas = function(w, h, settings)
+      local s = dpiScale
+      if settings and settings.dpiscale and not ignorePin then
+        s = settings.dpiscale
+      end
+      local c = { w = w, h = h, scale = s, px = {}, __canvas = true }
+      function c:newImageData()
+        return newImageData(self.px, self.w * self.scale, self.h * self.scale)
+      end
       return c
     end,
     getCanvas = function() return currentCanvas end,
@@ -177,7 +233,22 @@ _G.love = {
         -- under the battle's transform a draw at 0,0 lands off a canvas this
         -- small, so nothing arrives -- which is what the bug actually saw
         if transformed then return end
-        currentCanvas.px = img.px
+        -- a canvas at DPI scale n holds n physical pixels per drawn one, so
+        -- the pic arrives magnified and the readback is that much bigger
+        local s = currentCanvas.scale or 1
+        if s == 1 then
+          currentCanvas.px = img.px
+          return
+        end
+        local out = {}
+        for y = 1, #img.px * s do
+          out[y] = {}
+          local src = img.px[math.floor((y - 1) / s) + 1]
+          for x = 1, #img.px[1] * s do
+            out[y][x] = src[math.floor((x - 1) / s) + 1]
+          end
+        end
+        currentCanvas.px = out
       end
     end,
     rectangle = function(mode, x, y, w, h)
@@ -361,6 +432,94 @@ do
   check(devDefaults.diagnostic ~= nil, "developer mode offers DIAGNOSTIC")
   check(devDefaults.field_test ~= nil, "and FIELD TEST")
   check(devDefaults.field_test == false, "with the magenta field off to start")
+end
+
+do
+  -- An Unown O is a ring, and the hole is the letter.  It is the highest
+  -- enclosure in the whole Crystal sprite pack at 0.282, which is why the line
+  -- is at 0.35 and not at 0.20.
+  local UNOWN_O = newPic({
+    "..######..",
+    ".########.",
+    "###....###",
+    "###....###",
+    "###....###",
+    "###....###",
+    "###....###",
+    "###....###",
+    "###....###",
+    ".########.",
+  })
+  eq(#drawWith(UNOWN_O), 0, "art with an honest hole in it gets no paper")
+end
+
+do
+  -- An irregular silhouette is not a damaged one.
+  --
+  -- This is the white box in the report, and it is the second half of it: a
+  -- Crystal Koffing's frames are solid, and the three of nine that put its gas
+  -- plume out have a bounding box mostly full of the space around the plume.
+  -- Under "how much of the box is not ink" those three frames scored 0.51 and
+  -- the other six 0.26, so a healthy sprite crossed the line three times per
+  -- animation cycle and the paper blinked on and off behind it.
+  local fills = drawWith(PLUME)
+  eq(#fills, 0, "an awkward shape with no hole in it gets no paper")
+end
+
+do
+  -- And the damage itself, in a shape with nothing else odd about it.
+  local fills = drawWith(WINDOW)
+  eq(#fills, 1, "a body with a window eaten through it still gets paper")
+end
+
+-- ------------------------------------------------- the readback's own scale
+--
+-- love.graphics.newCanvas(w, h) takes the window's DPI SCALE unless it is told
+-- not to.  On the phone this was photographed on that is 3, so a 56x56 request
+-- is a 168x168 canvas, the pic lands in it three times the size, and the
+-- readback is 168x168.  Reading the pic's own 56x56 out of that is the pic's
+-- top-left EIGHTEEN pixels, magnified -- a corner, which has few enough
+-- colours to look like four-shade art and is empty enough to look eaten.  The
+-- paper then went down in a box measured off that corner: on the enemy side,
+-- 14x24 hard against the right edge of the pic, which is what the screenshot
+-- shows.  At scale 1 none of it happens, which is why it shipped twice.
+
+do
+  -- A FRESH pic for each of these: the measurement is cached per image, and
+  -- reusing the one measured at DPI 1 would hide the whole thing.
+  dpiScale = 3
+  local fills = drawWith(newPic(HOLLOW_ROWS))
+  eq(#fills, 1, "at DPI 3 the hollowed pic is still measured as hollowed")
+  local r = fills[1]
+  if r then
+    eq(r.x, 8, "and the paper starts where it does at DPI 1")
+    eq(r.y, 40, "on both axes")
+    eq(r.w, 20, "at the same width")
+    eq(r.h, 20, "and the same height")
+  end
+end
+
+do
+  -- A host that takes the size and ignores the dpiscale setting is measured
+  -- correctly anyway, because the measurement reads what came back rather than
+  -- what it asked for.
+  ignorePin = true
+  local fills = drawWith(newPic(HOLLOW_ROWS))
+  eq(#fills, 1, "a host that ignores the pin still gets a measurement")
+  local r = fills[1]
+  if r then
+    eq(r.w, 20, "of the same width as at DPI 1")
+    eq(r.h, 20, "and the same height")
+  end
+end
+
+do
+  -- The solid pic stays solid at 3 as well: a scaled readback must not turn
+  -- an undamaged mon into a corner that looks eaten.
+  eq(#drawWith(newPic(SOLID_ROWS)), 0, "and a solid pic still gets none at DPI 3")
+  eq(#drawWith(newPic(PLUME_ROWS)), 0, "nor does an awkward one")
+  ignorePin = false
+  dpiScale = 1
 end
 
 print(("%d/%d checks passed  (Gen1Arena paper)")
