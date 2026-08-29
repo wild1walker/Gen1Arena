@@ -523,8 +523,37 @@ end
 -- Measured once per image and cached weakly, so a species costs one readback
 -- the first time it is on screen and nothing after that.
 local PAPER_MAX_COLORS = 4
-local PAPER_MIN_HOLLOW = 0.30
+-- How much of the pic's box is transparency the mon's own ink is on both
+-- sides of, in both axes -- a hole through the body rather than the space
+-- around it.
+--
+-- This used to be plain emptiness: how much of the bounding box was not
+-- opaque.  That reads a shape as damaged for being an irregular shape.  A
+-- Crystal Koffing with a gas plume measures 0.51 empty on the frames the
+-- plume is out and 0.26 on the frames it is not, so a solid, undamaged sprite
+-- crossed a 0.30 line three times per animation cycle and the paper blinked
+-- on and off behind it.
+--
+-- Enclosure does not care what silhouette the mon has, only whether there is
+-- a window through it -- which is the whole complaint: "the mon went
+-- invisible", the backdrop showing where the body should be.
+--
+-- The line is set off the art rather than guessed.  All 8563 images in the
+-- Crystal sprite pack were measured: the highest is 0.282, an Unown O, which
+-- is a ring and honestly has a hole in it; the Koffing above runs 0.00 to
+-- 0.05, and only 67 images reach 0.20 at all.  A pic the flood reduced to a
+-- bare outline is 0.47 to 0.64.  0.35 sits in the gap with room on both
+-- sides.
+local PAPER_MIN_ENCLOSED = 0.35
 local PAPER_MAX_SIDE = 128
+-- A mon is not eight pixels across.  The smallest Gen 1 front pic is 5x5
+-- tiles and its content fills most of that, so a box under this is a piece of
+-- something rather than a whole pic -- which is what both of the ways this has
+-- gone wrong produced.  A floor on the COLOUR count would catch the same
+-- fragments and is deliberately not here: a pale mon the flood ate can be
+-- reduced to a bare black outline, one colour and nothing else, and that pic
+-- is exactly the one the paper exists for.
+local PAPER_MIN_SIDE = 8
 
 local paperBox = setmetatable({}, { __mode = "k" })
 
@@ -534,7 +563,21 @@ local paperBox = setmetatable({}, { __mode = "k" })
 -- alpha arrives exactly as the pic carries it rather than blended.
 local function readPic(img)
   local w, h = img:getDimensions()
-  local canvas = love.graphics.newCanvas(w, h)
+  -- DPISCALE IS LOAD-BEARING.  love.graphics.newCanvas(w, h) takes the
+  -- window's DPI scale unless it is told otherwise, so on a phone at scale 3
+  -- a 56x56 request is a 168x168 canvas, the pic is drawn into it three times
+  -- the size, and newImageData hands back 168x168.  The measurement below
+  -- then read the first 56x56 of that -- the top-left EIGHTEEN pixels of the
+  -- sprite, magnified -- and answered on a corner: one colour, mostly empty,
+  -- which passes both tests and lays paper in a box that is nowhere near the
+  -- mon.  On a desktop at scale 1 none of it happens, which is why this
+  -- shipped twice.
+  --
+  -- Pinned here, and the measurement checks what actually came back as well,
+  -- so a host that ignores the request is measured correctly rather than
+  -- measured wrong.
+  local ok, pinned = pcall(love.graphics.newCanvas, w, h, { dpiscale = 1 })
+  local canvas = (ok and pinned) or love.graphics.newCanvas(w, h)
   local prevCanvas = love.graphics.getCanvas()
   -- push("all") carries the colour, blend mode, shader and scissor; the canvas
   -- is not part of that state, so it is saved and put back by hand.
@@ -568,13 +611,33 @@ local function measurePic(img)
     return false
   end
   local data = readPic(img)
-  local minX, minY, maxX, maxY = w, h, -1, -1
-  local opaque, colors, nColors = 0, {}, 0
-  for y = 0, h - 1 do
-    for x = 0, w - 1 do
+
+  -- What came back, not what was asked for.  A canvas carries a DPI scale and
+  -- the readback is in ITS pixels, so this can be a whole-number multiple of
+  -- the pic even with the scale pinned above.  Reading the pic's own w by h
+  -- out of a bigger image reads one CORNER of it and answers on that; measure
+  -- all of what arrived and divide the box back down instead.  Anything that
+  -- is not a clean square multiple is a geometry this cannot reason about, and
+  -- painting a white rectangle on a guess is the failure being fixed.
+  local dw, dh = w, h
+  if type(data.getDimensions) == "function" then
+    local ok, gw, gh = pcall(data.getDimensions, data)
+    if ok and tonumber(gw) and tonumber(gh) then dw, dh = gw, gh end
+  end
+  if dw < w or dh < h or dw % w ~= 0 or dh % h ~= 0 or dw / w ~= dh / h then
+    return false
+  end
+  local ratio = dw / w
+
+  local opaque = {}
+  local minX, minY, maxX, maxY = dw, dh, -1, -1
+  local colors, nColors = {}, 0
+  for y = 0, dh - 1 do
+    local row = y * dw
+    for x = 0, dw - 1 do
       local r, g, b, a = data:getPixel(x, y)
       if a > 0.5 then
-        opaque = opaque + 1
+        opaque[row + x] = true
         if x < minX then minX = x end
         if x > maxX then maxX = x end
         if y < minY then minY = y end
@@ -592,9 +655,52 @@ local function measurePic(img)
     end
   end
   if maxX < minX or nColors > PAPER_MAX_COLORS then return false end
+
   local bw, bh = maxX - minX + 1, maxY - minY + 1
-  if 1 - opaque / (bw * bh) < PAPER_MIN_HOLLOW then return false end
-  return { x = minX, y = minY, w = bw, h = bh }
+  if bw / ratio < PAPER_MIN_SIDE or bh / ratio < PAPER_MIN_SIDE then
+    return false
+  end
+
+  -- How far the ink reaches along each row and each column.  A transparent
+  -- pixel with ink on both sides of it in its row AND in its column is inside
+  -- the mon; one that runs out to the edge of the box in either axis is the
+  -- space around the mon, whatever shape that space happens to be.
+  local rowFirst, rowLast, colFirst, colLast = {}, {}, {}, {}
+  for y = minY, maxY do
+    local row = y * dw
+    for x = minX, maxX do
+      if opaque[row + x] then
+        if not rowFirst[y] then rowFirst[y] = x end
+        rowLast[y] = x
+      end
+    end
+  end
+  for x = minX, maxX do
+    for y = minY, maxY do
+      if opaque[y * dw + x] then
+        if not colFirst[x] then colFirst[x] = y end
+        colLast[x] = y
+      end
+    end
+  end
+
+  local enclosed = 0
+  for y = minY, maxY do
+    local row = y * dw
+    local rf, rl = rowFirst[y], rowLast[y]
+    if rf then
+      for x = rf + 1, rl - 1 do
+        if not opaque[row + x] then
+          local cf, cl = colFirst[x], colLast[x]
+          if cf and y > cf and y < cl then enclosed = enclosed + 1 end
+        end
+      end
+    end
+  end
+  if enclosed / (bw * bh) < PAPER_MIN_ENCLOSED then return false end
+
+  return { x = minX / ratio, y = minY / ratio,
+           w = bw / ratio, h = bh / ratio }
 end
 
 local function picPaperBox(img)

@@ -409,10 +409,22 @@ places the mistake was visible.
   bounding box -- reads as a bare outline with the scenery showing through.
   MON PAPER fills the pic's own content box with the field shade before the
   engine draws it, which is the composition the Game Boy showed. Only pics that
-  actually lost something get it: four-shade art with more than 30% of its
-  content box transparent. A sprite mod's true-colour replacement carries its
-  own alpha and is left alone, so a Crystal front and a vanilla back in the
-  same battle are each treated correctly.
+  actually lost something get it: four-shade art with more than 35% of its
+  content box given over to transparency the mon's own ink is on both sides of,
+  in both axes -- a window *through* the body rather than the space around it.
+  A sprite mod's true-colour replacement carries its own alpha and is left
+  alone, so a Crystal front and a vanilla back in the same battle are each
+  treated correctly.
+
+  That test used to be plain emptiness -- how much of the bounding box was not
+  ink -- and it read an awkward shape as a damaged one. A Crystal Koffing with
+  its gas plume out measures 0.51 empty on three frames of nine and 0.26 on the
+  other six, so a solid, undamaged sprite crossed a 0.30 line three times per
+  animation cycle and the paper blinked on and off behind it. By enclosure
+  every frame of it scores 0.00 to 0.05. The line at 0.35 is set off the art:
+  across all 8,563 images in that sprite pack the highest is 0.282, an Unown O,
+  which is a ring and honestly has a hole in it, while a pic the flood reduced
+  to a bare outline is 0.47 to 0.64.
 - **Palette modes.** Backdrops bypass the palette bake, so they do not shift
   with COLORS. In OG / OG INV / CLASSIC you get full-colour GBA art behind
   four-shade sprites. Check it in ADVANCED first.
