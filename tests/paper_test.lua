@@ -273,6 +273,14 @@ local mod = {
     get = function(_, key) return defaults[key] end,
   },
   events = { on = function(_, name, fn) defaults["@" .. name] = fn end },
+  -- The Loader hands every mod one of these (Loader.lua:1268) and this mod
+  -- publishes its bleed geometry through it, so the stand-in needs it to be
+  -- a table rather than nil.
+  exports = {},
+  -- and the mod wraps render.letterbox to paint the bars around a wide
+  -- battle.  Nothing in this file drives that hook; it is here so requiring
+  -- the mod does not stop at it.
+  hooks = { wrap = function(_, name, fn) defaults["#" .. name] = fn end },
 }
 
 -- The engine stand-in.  Only what the mod actually touches: the two draw
@@ -427,6 +435,8 @@ do
       get = function(_, key) return devDefaults[key] end,
     },
     events = { on = function() end },
+    exports = {},
+    hooks = { wrap = function() end },
   }
   assert(loadfile(root .. "/main.lua"))(devMod)
   check(devDefaults.diagnostic ~= nil, "developer mode offers DIAGNOSTIC")

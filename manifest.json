@@ -1,19 +1,24 @@
 {
   "id": "gen1arena",
   "name": "Gen1Arena",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "api": 2,
-  "games": ["gen1"],
+  "games": [
+    "gen1"
+  ],
   "entry": "main.lua",
   "profile": "content",
   "category": "GRAPHICS",
   "game_version": ">=0.1.37 <2.0.0",
   "priority": 50,
-  "permissions": ["engine_internals"],
+  "permissions": [
+    "engine_internals"
+  ],
   "affects_link": false,
   "dependencies": [],
   "optional_dependencies": [],
   "conflicts": [],
-  "description": "2D image backdrops behind battles, chosen by map, tileset and encounter kind. Supports the OG 160x144 and WIDE 304x144 layouts. Purely presentational.", "author": "Wild",
+  "description": "2D image backdrops behind battles, chosen by map, tileset and encounter kind. Supports the OG 160x144 and WIDE 304x144 layouts. Purely presentational.",
+  "author": "Wild",
   "github": "wild1walker/Gen1Arena"
 }

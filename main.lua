@@ -436,6 +436,9 @@ end
 
 local active = false          -- inside a wrapped battle draw
 local pendingImage = nil      -- backdrop chosen for this frame
+-- ...and the one to carry into the bars around it, claimed by the letterbox
+-- pass at the end of the same frame.  See the note over bleedInto.
+local bleedImage, bleedW, bleedH = nil, OG_W, OG_H
 local pendingW, pendingH = OG_W, OG_H
 local outerCanvas = nil       -- the canvas bound when the battle draw began
 local consumed = false        -- the field fill has already been replaced
@@ -484,6 +487,175 @@ local function rectangleShim(mode, x, y, w, h, ...)
   end
   return realRectangle(mode, x, y, w, h, ...)
 end
+
+-- ------------------------------------------------- the bars around it
+--
+-- A battle asks the renderer for a WHITE surround.  `Renderer:endFrame`
+-- clears the void around the blit to `PaletteFX.paperShade` for any state
+-- that sets `letterboxWhite`, and a battle sets it -- which is exactly right
+-- for the game it was written for.  The battle field is white paper, so a
+-- white surround makes that paper look like it runs off the edges of the
+-- screen instead of stopping at a rectangle.
+--
+-- Put a picture in the field and that reasoning inverts.  The paper is gone
+-- and the surround is the only white left, so instead of disappearing it
+-- becomes a bright frame around the art -- and the wider the surface, the
+-- more of it there is.  A WIDE battle is 304x144: very wide and no taller, so
+-- in an ordinary window the bars above and below it are the biggest thing on
+-- the screen.  That is the white bar at the top of a wide arena.
+--
+-- So the backdrop is carried into the bars.  `render.letterbox` is the seam
+-- the engine documents for exactly this ("SGB borders / custom void art in
+-- the bars around the 160x144 (or world) blit"), and it runs after the void
+-- is cleared and before the game canvas is drawn, so the playfield still
+-- lands on top and nothing here can cover the battle.
+--
+-- It is drawn by EDGE CLAMP rather than by scaling the picture up to the
+-- window.  The bars have to continue the field, and a magnified copy of the
+-- same image behind a 1:1 copy of it meets at a visible seam -- two different
+-- scales of the same tree.  Stretching the outermost row of pixels instead
+-- gives the bars the colour the field already has where it meets them: sky at
+-- the top, ground at the bottom, and no seam at all, which is what a backdrop
+-- painted to the edge of its frame is asking for.
+-- ------- how a bar is filled
+--
+-- It was the picture's one-pixel edge, stretched outward: the left column
+-- into the left bar, the top row into the top bar, a corner pixel into each
+-- corner.  That is exact where the bars are thin -- the colour at the seam is
+-- the colour the field ends on, so there is no line -- and it falls apart
+-- where they are not.  On a landscape phone the bars are wider than the
+-- surface between them, and a backdrop with sky, hill and grass in it becomes
+-- a field of horizontal stripes: one band per source row, six screen pixels
+-- tall, for two thirds of the window.  A player called it broken and was
+-- right.
+--
+-- So the bars show the SAME PICTURE, scaled to cover the window, and each bar
+-- shows the part of it that falls where that bar is.  What that buys:
+--
+--   * the bars carry real detail rather than a smear of one column;
+--   * the cover scale is max(ww/iw, wh/ih) and the surface's is vpw/iw, so as
+--     the bars shrink the two converge and the seam closes by itself.  Thin
+--     bars look exactly as continuous as the stretch did; wide ones degrade
+--     into a zoomed backdrop instead of stripes.
+--
+-- Cover means cover, so every bar's source rectangle is inside the picture
+-- and there is nothing to clamp.  Quads rather than a scissor because a
+-- scissor is in physical pixels and this pass is not the only thing that
+-- decides the transform -- a quad is exact whatever the display is doing.
+--
+-- Cut once per (picture, window) rather than once per frame: the eight of
+-- them only change when the window does.
+local quadCache = setmetatable({}, { __mode = "k" })
+
+-- Where the picture lands when it is scaled to cover (ww, wh).
+local function coverFit(iw, ih, ww, wh)
+  if not (iw > 0 and ih > 0 and ww > 0 and wh > 0) then return nil end
+  local scale = math.max(ww / iw, wh / ih)
+  return scale, (ww - iw * scale) * 0.5, (wh - ih * scale) * 0.5
+end
+
+local function coverQuads(img, iw, ih, view, rects)
+  local scale, dx, dy = coverFit(iw, ih, view.ww or 0, view.wh or 0)
+  if not scale then return nil end
+  local key = ("%d:%d:%d:%d:%d:%d")
+    :format(view.ww or 0, view.wh or 0, view.ox or 0, view.oy or 0,
+            view.vpw or 0, view.vph or 0)
+  local cached = quadCache[img]
+  if cached and cached.key == key then return cached, scale, dx, dy end
+  cached = { key = key, quads = {} }
+  for i, r in ipairs(rects) do
+    cached.quads[i] = love.graphics.newQuad(
+      (r.x - dx) / scale, (r.y - dy) / scale,
+      r.w / scale, r.h / scale, iw, ih)
+  end
+  quadCache[img] = cached
+  return cached, scale, dx, dy
+end
+
+-- FAITHFUL RATIO's mobile lock, asked the way the renderer asks it.
+local function faithfulLocked()
+  local ok, FaithfulRes = pcall(require, "src.core.FaithfulRes")
+  if not ok or type(FaithfulRes) ~= "table" then return false end
+  if type(FaithfulRes.scaleCap) ~= "function" then return false end
+  local capped, value = pcall(FaithfulRes.scaleCap)
+  return capped and value and true or false
+end
+
+-- Which bars there are, and where each one goes.  Pure: `view` in, a list of
+-- { slice, x, y, w, h } out, in the order they are drawn.  `slice` names which
+-- one-pixel edge of the picture is stretched into that rectangle.
+--
+-- Separated from the drawing because this is the whole of what can be wrong
+-- here -- a bar an edge short, a corner left as paper, a rectangle with a
+-- negative width -- and none of it needs a window to check.  tests/
+-- arenableed_test.lua drives it directly.
+local function bleedRects(view)
+  if type(view) ~= "table" then return nil end
+  local ox, oy = view.ox or 0, view.oy or 0
+  local vpw, vph = view.vpw or 0, view.vph or 0
+  local ww, wh = view.ww or 0, view.wh or 0
+  if vpw <= 0 or vph <= 0 or ww <= 0 or wh <= 0 then return nil end
+
+  local right = ww - (ox + vpw)      -- the bar to the right of the surface
+  local below = wh - (oy + vph)      -- ...and under it
+  local out = {}
+  local function add(slice, x, y, w, h)
+    if w > 0 and h > 0 then
+      out[#out + 1] = { slice = slice, x = x, y = y, w = w, h = h }
+    end
+  end
+
+  -- The four sides first, each the full length of the surface it borders,
+  -- then the corners, which the sides do not reach.
+  add("top", ox, 0, vpw, oy)
+  add("bottom", ox, oy + vph, vpw, below)
+  add("left", 0, oy, ox, vph)
+  add("right", ox + vpw, oy, right, vph)
+  add("tl", 0, 0, ox, oy)
+  add("tr", ox + vpw, 0, right, oy)
+  add("bl", 0, oy + vph, ox, below)
+  add("br", ox + vpw, oy + vph, right, below)
+  return out
+end
+
+local function bleedInto(view)
+  local img = bleedImage
+  -- Claimed, not read: the hook runs once per frame after the battle drew,
+  -- and a frame with no battle draw in it must not inherit the last one's
+  -- picture.  Clearing on the way past is what makes that true without a
+  -- frame counter.
+  bleedImage = nil
+  if not img then return end
+  if mod.options:get("bleed") == false then return end
+  -- BATTLE BG "world" runs the world pass, which takes the whole window and
+  -- leaves no bars to fill.
+  if view and view.worldActive then return end
+  -- FAITHFUL RATIO's mobile lock promises the display outside the GB screen
+  -- stays black (src/core/FaithfulRes.lua), and the renderer honours that
+  -- ahead of the paper surround.  A backdrop in the bars would break the same
+  -- promise, so it stands down for the same reason the paper does.
+  if faithfulLocked() then return end
+
+  local rects = bleedRects(view)
+  if not rects or not rects[1] then return end
+
+  local iw, ih = img:getDimensions()
+  if iw <= 0 or ih <= 0 then return end
+  local cut, scale = coverQuads(img, iw, ih, view, rects)
+  if not cut then return end
+
+  local g = love.graphics
+  g.setColor(1, 1, 1, 1)
+  -- Eight draws at most, each the part of the covering picture that falls
+  -- where that bar is, at the cover's own scale.
+  for i, r in ipairs(rects) do
+    local quad = cut.quads[i]
+    if quad then g.draw(img, quad, r.x, r.y, 0, scale, scale) end
+  end
+end
+
+mod.exports.bleedRects = bleedRects
+mod.exports.bleedCover = coverFit
 
 -- ------------------------------------------------------- the paper behind
 
@@ -771,6 +943,12 @@ local function wrap(original, surfaceW, surfaceH, layout)
     local ok, err = pcall(original, ...)
 
     love.graphics.rectangle = realRectangle
+    -- Only when a backdrop actually replaced the field.  With BACKDROPS off,
+    -- or on a battle no slot answered, the engine's own white field is still
+    -- there and the white bars around it are the right colour for it.
+    if consumed then
+      bleedImage, bleedW, bleedH = pendingImage, surfaceW, surfaceH
+    end
     active, pendingImage, outerCanvas = false, nil, nil
 
     if not ok then error(err, 0) end
@@ -839,6 +1017,12 @@ end
 local optionRows = {
   { key = "enabled", type = "toggle", label = "BACKDROPS", default = true },
   { key = "pic_paper", type = "toggle", label = "MON PAPER", default = true },
+  -- The bars around the battle.  On, the backdrop's own edge is stretched
+  -- into them so the picture runs off the screen; off, they are the paper
+  -- white the engine gives a battle, which with a backdrop up reads as a
+  -- bright frame around the art -- and in a WIDE battle as a big white bar
+  -- above and below it.  See bleedInto.
+  { key = "bleed", type = "toggle", label = "EDGE TO EDGE", default = true },
 }
 
 if DEV then
@@ -974,6 +1158,17 @@ local function audit(game)
     for _, p in ipairs(problems) do mod.log:warn("  %s", p) end
   end
 end
+
+-- The bars, every frame, after the void is cleared and before the playfield
+-- is drawn over the middle of it.
+mod.hooks:wrap("render.letterbox", function(nextLink, view)
+  local ok, err = pcall(bleedInto, view)
+  if not ok then
+    bleedImage = nil
+    mod.log:warn("the backdrop did not reach the bars: %s", tostring(err))
+  end
+  return nextLink(view)
+end)
 
 mod.events:on("game.ready", function(ev)
   loaded = true
