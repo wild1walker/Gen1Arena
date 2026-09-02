@@ -21,8 +21,51 @@
 
 local ok_bs, BattleState = pcall(require, "src.battle.BattleState")
 local ok_wb, WideBattle = pcall(require, "src.battle.WideBattle")
+local ok_rend, Renderer = pcall(require, "src.render.Renderer")
 
 local mod = ...
+
+-- ------- and the one case where a backdrop is the wrong answer entirely
+--
+-- A voxel mod draws the battle over the MAP.  There is a whole diorama behind
+-- the fight already, so a picture painted into the field is at best a second
+-- background nobody asked for and at worst a fight with the mod drawing the
+-- first one: DRAMALESS_SHAPE suppresses the engine's field fill by shimming
+-- `love.graphics.rectangle`, which is the same call this mod shims to REPLACE
+-- that fill.  Two mods swapping one function for the length of one draw is a
+-- coin toss decided by load order.
+--
+-- So this stands down, and the test is the renderer rather than a list of mod
+-- ids.  Every voxel fork -- the Dramatic Shape lineage, DRAMALESS_SHAPE,
+-- potato_voxel -- presents its battle the same way, through
+-- `Renderer:setWorldOverride`, and the renderer clears that in `beginFrame`.
+-- So a non-nil `worldOverride` is exactly "something has replaced the world
+-- image on THIS frame", which is the question, asked of the engine, with no
+-- mod named.  A fork with its 3D battles switched off never sets it and this
+-- never fires -- which is right: then there IS no diorama and the backdrop is
+-- wanted.
+--
+-- Read at draw time and not cached: the forks set it from their own
+-- `BattleState:draw` wrap before calling through to the engine's, so it is
+-- already there when this mod's wrap around drawClassic runs.
+--
+-- Two conditions, and the first one is not optional.  A world override ALONE
+-- is not a voxel mod: the engine sets one for its OWN render pipelines
+-- (OverworldController -> Pipelines.drawWorld -> Renderer:setWorldOverride),
+-- so reading the override by itself would stand this mod down for a pipeline
+-- mod, or for the engine's own world-background battle, neither of which puts
+-- a diorama behind the fight.  The first draft of this did exactly that.
+--
+-- So: a voxel mod is installed AND something replaced the world image on this
+-- frame.  With no voxel mod the first test fails and nothing else is even
+-- asked, which makes this change inert for the overwhelming majority of
+-- installs -- the ones with no voxel mod at all.
+local function worldTaken()
+  local voxel = mod.voxel
+  if not (voxel and voxel.id()) then return false end
+  if not (ok_rend and type(Renderer) == "table") then return false end
+  return Renderer.worldOverride ~= nil
+end
 
 local OG_W, OG_H = 160, 144
 local WIDE_W, WIDE_H = 304, 144
@@ -50,6 +93,10 @@ local WIDE_W, WIDE_H = 304, 144
 -- player cannot.  The loader resolves the environment once at construction
 -- and copies the verdict onto the handle as plain data, for exactly this.
 --
+-- Asked through this rather than straight off the option set, because rows
+-- that go away have to take their stored values with them.  A player who
+-- turned FIELD TEST on once to see what it did, and then took an update,
+-- would otherwise keep a magenta battlefield with no row left to turn it off.
 -- Asked through this rather than straight off the option set, because rows
 -- that go away have to take their stored values with them.  A player who
 -- turned FIELD TEST on once to see what it did, and then took an update,
@@ -627,6 +674,9 @@ local function bleedInto(view)
   bleedImage = nil
   if not img then return end
   if mod.options:get("bleed") == false then return end
+  -- Nothing painted the field this frame, so there is no edge to stretch.
+  -- The bars belong to whatever took the world.
+  if worldTaken() then return end
   -- BATTLE BG "world" runs the world pass, which takes the whole window and
   -- leaves no bars to fill.
   if view and view.worldActive then return end
@@ -654,6 +704,9 @@ local function bleedInto(view)
   end
 end
 
+-- Published for tests/arenavoxel_test.lua: the one decision that stands this
+-- whole mod down, and the one that is silent when it is wrong.
+mod.exports.worldTaken = worldTaken
 mod.exports.bleedRects = bleedRects
 mod.exports.bleedCover = coverFit
 
@@ -929,6 +982,9 @@ local function wrap(original, surfaceW, surfaceH, layout)
   return function(...)
     local battle = ...
     if not mod.options:get("enabled") then return original(...) end
+    -- A voxel mod is already drawing a world behind this battle; see
+    -- worldTaken.
+    if worldTaken() then return original(...) end
     -- The nickname prompt deliberately blanks the field to white; leave it.
     if battle and battle.blankForAskName then return original(...) end
 
