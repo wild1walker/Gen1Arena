@@ -198,6 +198,23 @@ audit from the title screen will report `not_in_playthrough`.
 
 `audit.bin` is the artefact to attach when reporting a gap.
 
+## On Gold, Silver and Crystal
+
+The mod runs on the Gen 2 carts too, and the backdrops there are Johto's own.
+126 files under `assets/backdrops/og/gen2/`, mapped the same way Kanto's are:
+by the cart's tileset and landmark rather than by a list of map ids, so a map
+the table has never heard of still lands on something sensible instead of
+nothing.
+
+Gold picks a battle's scene from a different set of facts than Red does, so
+the lookup is its own rather than the Kanto one with names swapped. Tileset
+first, then the landmark, then the trainer's class for the ones that have a
+scene of their own — a gym leader is fought in their gym, the champion at the
+Plateau. Sea and lake are separated by landmark, as they are on Red.
+
+Everything else behaves as it does on Red: the same two crops, the same
+palette correction, the same `BATTLE SCENES` row to turn the whole thing off.
+
 ## Town recolours
 
 Taken from the engine's own overworld colouring, not invented.

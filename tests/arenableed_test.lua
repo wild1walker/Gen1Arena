@@ -19,9 +19,6 @@
 --
 -- Run:  luajit tests/arenableed_test.lua
 
-local here = arg and arg[0] and arg[0]:match("^(.*)[/\\][^/\\]*$") or "."
-local root = here:match("^(.*)[/\\]tests$") or (here .. "/..")
-
 package.path = "./?.lua;" .. package.path
 
 local passed, failed = 0, 0
@@ -69,7 +66,7 @@ love.graphics.draw = love.graphics.draw or function() end
 -- Gen1Arena installs at chunk scope off `local mod = ...`, so this is the
 -- only other thing it needs.
 local mod = {
-  id = "gen1_wild_ui",
+  id = "gen1_wild_ui_nightly",
   exports = {},
   stored = {},
   hooked = {},
@@ -90,7 +87,7 @@ mod.assets = { path = function(_, p) return p end }
 mod.storage = { writeBytes = function() return true end }
 mod.content = {}
 
-load_(root .. "/main.lua", mod)
+load_("main.lua", mod)
 
 local bleedRects = mod.exports.bleedRects
 ok(type(bleedRects) == "function", "bleedRects is exposed")
