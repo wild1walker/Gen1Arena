@@ -1013,6 +1013,34 @@ local realRectangle = love.graphics.rectangle
 -- This used to share the DIAGNOSTIC toggle with the logging and the audit,
 -- which meant anyone running the audit had to play through a magenta game to
 -- get it. Separate toggles: DIAGNOSTIC logs, FIELD TEST paints.
+-- ------- and it is painted with NO SHADER BOUND
+--
+-- Reported three times as "the battle is all greyscale", and the screenshot
+-- says it in one line: every pixel on the screen is one of three DMG shades,
+-- and the ONE thing still in colour is the EXP bar -- which is the one thing
+-- that calls `love.graphics.setShader()` before it paints (Gen1BattleUI
+-- xpbar.lua, "exempt from the palette pass").
+--
+-- These draws are substituted INTO somebody else's draw, from a shim on
+-- `love.graphics.rectangle`, so whatever shader the caller had bound is still
+-- bound when they run.  For a fill that does not matter -- a flat colour
+-- through the shade remap is still a flat colour.  For a PHOTOGRAPH it is the
+-- whole picture: PaletteFX's shader answers every pixel with one of four
+-- palette entries chosen off its RED channel, so a FireRed terrain scene
+-- comes back as four greys and this mod reads as if it never ran.
+--
+-- So the shader is put down for the length of the paint and handed back
+-- exactly as it was.  Not cleared and left cleared: this is the middle of the
+-- cart's own draw, and the shade remap after it is the cart's.
+local function withoutShader(draw)
+  local g = love.graphics
+  local had = g.getShader and g.getShader() or nil
+  if had then g.setShader() end
+  local ok, err = pcall(draw)
+  if had then g.setShader(had) end
+  if not ok then error(err, 0) end
+end
+
 local function paintField()
   if devOption("field_test") then
     love.graphics.setColor(1, 0, 1, 1)
@@ -1020,7 +1048,9 @@ local function paintField()
     love.graphics.setColor(1, 1, 1, 1)
     return
   end
-  drawCover(pendingImage, pendingW, pendingH)
+  withoutShader(function()
+    drawCover(pendingImage, pendingW, pendingH)
+  end)
 end
 
 local function rectangleShim(mode, x, y, w, h, ...)
@@ -1212,15 +1242,24 @@ local function bleedInto(view)
   local g = love.graphics
   g.setColor(1, 1, 1, 1)
   -- Eight draws at most, each the part of the covering picture that falls
-  -- where that bar is, at the cover's own scale.
-  for i, r in ipairs(rects) do
-    local quad = cut.quads[i]
-    if quad then g.draw(img, quad, r.x, r.y, 0, scale, scale) end
-  end
+  -- where that bar is, at the cover's own scale.  Through no shader, for the
+  -- reason under paintField: this is the same photograph, and bars in four
+  -- greys beside a field in colour would be worse than either.
+  withoutShader(function()
+    for i, r in ipairs(rects) do
+      local quad = cut.quads[i]
+      if quad then g.draw(img, quad, r.x, r.y, 0, scale, scale) end
+    end
+  end)
 end
 
 -- Published for tests/arenavoxel_test.lua: the one decision that stands this
 -- whole mod down, and the one that is silent when it is wrong.
+-- Published for tests/arenashader_test.lua: the guard every full-colour paint
+-- in this file goes through, and the one whose absence is invisible until a
+-- screenshot comes back in four greys.
+mod.exports.paintsWithoutShader = withoutShader
+
 mod.exports.worldTaken = worldTaken
 mod.exports.bleedRects = bleedRects
 mod.exports.bleedCover = coverFit

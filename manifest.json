@@ -1,7 +1,7 @@
 {
   "id": "gen1arena",
   "name": "Gen1Arena",
-  "version": "0.24.0",
+  "version": "0.25.0",
   "api": 2,
   "games": [
     "gen1",
