@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.25.1
+
+- **CI is green again.** `arenagen2paper_test.lua` asserted that an engine
+  checkout is present, so on a runner that has none — which is every runner —
+  it reported a failure instead of a skip. The reads that actually need a tree
+  were already behind `if ENGINE`; the reads of this repo's own `main.lua`
+  never needed one. No shipped behaviour changes.
+
 ## 0.25.0
 
 - **The backdrop is painted with no shader bound.** Reported three times as
