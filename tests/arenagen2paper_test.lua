@@ -599,12 +599,65 @@ do
 end
 
 do
-  -- Replacement art: too many colours to be a 2bpp pic, and it carries its own
-  -- alpha.  Refused, by the same test the paper arm uses.
+  -- Replacement art that BLEEDS TO ITS OWN EDGE.  A gradient across the whole
+  -- square is not a figure standing in a field, and the border says so: no
+  -- single colour runs all the way round it.  Left alone.
   local img, restore = shadePic(8, 8, function(x, y) return (x * 8 + y) / 64 end)
   local cut = mod.exports.picCutoutImage(img)
   restore()
-  eq(cut, nil, "full-colour replacement art is left alone")
+  eq(cut, nil, "full-colour art that reaches its own edge is left alone")
+end
+
+-- ---- a FULL-COLOUR trainer standing in a white square
+--
+-- Reported as "some trainers didn't appear with the background removed", with
+-- a screenshot of a SAILOR in a white box beside a player whose box was gone.
+--
+-- The gate was a colour COUNT: four is a 2bpp cart pic exactly, and a
+-- replacement trainer -- skin, bandana, shirt, shading -- has a dozen.  Every
+-- one was refused, and the refusal was cached, so it kept its square for the
+-- whole battle while the cart's own pics were cut beside it.
+--
+-- The count was standing in for "is this a figure in a field", which the
+-- BORDER answers directly.  This is that pic: many colours, fully opaque, and
+-- white all the way round.
+
+do
+  local COLOURS = { 0.95, 0.62, 0.41, 0.27, 0.13, 0.72, 0.55, 0.34 }
+  local img, restore = shadePic(10, 10, function(x, y)
+    -- a white field, and a figure of eight shades that never touches an edge
+    if x == 0 or y == 0 or x == 9 or y == 9 then return 1 end
+    if x < 2 or y < 2 or x > 7 or y > 7 then return 1 end
+    return COLOURS[((x * 3 + y * 5) % #COLOURS) + 1]
+  end)
+  local cut = mod.exports.picCutoutImage(img)
+  restore()
+  ok(cut ~= nil,
+    "a full-colour trainer standing in a white square is cut out of it")
+
+  local mask = cut and cut.__data
+  if mask then
+    local corner = mask:at(0, 0)
+    eq(corner and corner[4], 0, "the corner of the square is cut to alpha 0")
+    local inside = mask:at(5, 5)
+    ok(inside and inside[4] == 1, "and the figure is left opaque")
+  end
+end
+
+do
+  -- ...and the same pic with ONE white pixel of its own on the border is not
+  -- a figure in a field any more.  The guard is the whole border, not a
+  -- corner: a picture that reaches its edge is a picture, not a square.
+  local COLOURS = { 0.95, 0.62, 0.41, 0.27, 0.13, 0.72, 0.55, 0.34 }
+  local img, restore = shadePic(10, 10, function(x, y)
+    if x == 0 and y == 5 then return 0.27 end     -- one pixel of the figure
+    if x == 0 or y == 0 or x == 9 or y == 9 then return 1 end
+    if x < 2 or y < 2 or x > 7 or y > 7 then return 1 end
+    return COLOURS[((x * 3 + y * 5) % #COLOURS) + 1]
+  end)
+  local cut = mod.exports.picCutoutImage(img)
+  restore()
+  eq(cut, nil, "art whose figure touches the border is left alone")
 end
 
 do

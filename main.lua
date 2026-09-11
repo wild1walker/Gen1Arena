@@ -1725,6 +1725,7 @@ local function buildCutout(img)
   -- is the same shade the hardware would call 0.
   local px, colors, nColors = {}, {}, 0
   local field, fieldRed = nil, -1
+  local tooMany = false
   for y = 0, h - 1 do
     local row = y * w
     for x = 0, w - 1 do
@@ -1736,16 +1737,45 @@ local function buildCutout(img)
                 + math.floor(g * 255 + 0.5) * 256
                 + math.floor(b * 255 + 0.5)
       px[row + x] = key
-      if not colors[key] then
+      if not (colors[key] or tooMany) then
         colors[key] = true
         nColors = nColors + 1
-        if nColors > PAPER_MAX_COLORS then return false end
+        if nColors > PAPER_MAX_COLORS then tooMany = true end
       end
       if r > fieldRed then field, fieldRed = key, r end
     end
   end
   -- A single-colour square is not a picture with a field around it.
   if nColors < 2 or not field then return false end
+
+  -- ------- and the same square, in art that is not 2bpp
+  --
+  -- Reported as "some trainers didn't appear with the background removed",
+  -- with a screenshot of a SAILOR in a white box beside a player whose box
+  -- was gone.  The count above is why: four colours is a cart pic exactly,
+  -- and a replacement trainer -- skin, bandana, shirt, shading -- has a dozen.
+  -- Every one of them was refused and cached as refused, so it kept its
+  -- square for the whole battle while the cart's own pics were cut.
+  --
+  -- The count was standing in for a question it only answers by accident:
+  -- IS THIS A FIGURE IN A FIELD.  A cart pic is, and has four colours; a
+  -- photograph is not, and has hundreds.  Asked directly, the answer is the
+  -- BORDER -- a figure standing in a square has the field, and only the
+  -- field, all the way round it.  Replacement art that bleeds to its own edge
+  -- does not, and is still left alone.
+  --
+  -- Kept as a second gate rather than replacing the first, because the first
+  -- is free and true of every pic the cart ships: a 2bpp pic is let through
+  -- on the count alone, exactly as before, and nothing about those changes.
+  if tooMany then
+    for x = 0, w - 1 do
+      if px[x] ~= field or px[(h - 1) * w + x] ~= field then return false end
+    end
+    for y = 0, h - 1 do
+      local row = y * w
+      if px[row] ~= field or px[row + w - 1] ~= field then return false end
+    end
+  end
 
   -- `opaque` here means "part of the figure", so the flood fill below is the
   -- one above with transparency swapped for the field shade.

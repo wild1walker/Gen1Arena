@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.26.0
+
+- **A full-colour trainer is cut out of its square too.** Reported as "some
+  trainers didn't appear with the background removed", with a screenshot of a
+  SAILOR in a white box beside a player whose box was gone.
+
+  The gate was a colour **count**: four is a 2bpp cart pic exactly, and a
+  replacement trainer — skin, bandana, shirt, shading — has a dozen. Every one
+  was refused, and the refusal was cached, so it kept its square for the whole
+  battle while the cart's own pics were cut beside it.
+
+  The count was standing in for a question it only answers by accident: *is
+  this a figure in a field?* The **border** answers it directly — a figure
+  standing in a square has the field, and only the field, all the way round
+  it. Art that bleeds to its own edge does not, and is still left alone. The
+  count stays as the free first gate, so nothing about the cart's own pics
+  changes.
+
 ## 0.25.1
 
 - **CI is green again.** `arenagen2paper_test.lua` asserted that an engine
