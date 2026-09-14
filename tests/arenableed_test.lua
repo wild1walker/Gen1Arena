@@ -337,5 +337,101 @@ do
   eq(bleedCover(160, 144, 800, 0), nil, "...on either axis")
 end
 
+-- ------------------------------------------- where the picture stops being
+-- a picture
+--
+-- Every backdrop is authored with its last rows in ONE flat colour, because
+-- those are the rows the cart's message box sits on: 48 of them on the
+-- 160-wide art, exactly the box's six tiles, and 40 on the 304-wide art.  On
+-- the game screen nobody ever sees them.
+--
+-- The BARS see them.  On the classic surface this mod bleeds the wide art
+-- into the wings either side, and out there the cart has no message box -- so
+-- the band arrives as a slab of flat colour across the bottom of both wings.
+-- That is the report, with the two of them circled in red: *"there is still a
+-- bar of solid color at the bottom, can we make it so those are cut off?"*
+--
+-- Measured off the file rather than declared, so the answer follows the art.
+
+-- An ImageData as LOVE hands one over, from a row-painting function.
+local function fakeData(w, h, at)
+  return {
+    getDimensions = function() return w, h end,
+    getPixel = function(_, x, y)
+      local r, g, b = at(x, y)
+      return r, g, b, 1
+    end,
+  }
+end
+
+local bandTop = mod.exports.arenaBandTop
+
+do
+  io.write("the flat band is measured off the picture\n")
+  local made = {}
+  love.image = { newImageData = function(path) return made[path] end }
+
+  -- The wide art: 40 flat rows under 104 rows of scenery.
+  made["wide"] = fakeData(304, 144, function(x, y)
+    if y >= 104 then return 0.87, 1, 0.32 end
+    return (x % 7) / 7, (y % 5) / 5, 0.5
+  end)
+  eq(bandTop("wide", 304, 144), 104, "the wide art's band starts at row 104")
+
+  -- The classic art: 48, which is the message box's six tiles exactly.
+  made["og"] = fakeData(160, 144, function(x, y)
+    if y >= 96 then return 0.87, 1, 0.32 end
+    return (x % 7) / 7, (y % 5) / 5, 0.5
+  end)
+  eq(bandTop("og", 160, 144), 96, "and the classic art's at row 96")
+
+  -- A single flat edge row is ordinary art, not a band, and trimming it would
+  -- take a row off every backdrop that happens to end on one colour.
+  made["edge"] = fakeData(304, 144, function(x, y)
+    if y >= 143 then return 0, 0, 0 end
+    return (x % 7) / 7, (y % 5) / 5, 0.5
+  end)
+  eq(bandTop("edge", 304, 144), nil, "a one-row edge is not a band")
+
+  -- ...and a picture that is mostly one colour is a flat backdrop with
+  -- nothing to trim, not a picture with an enormous band.
+  made["flat"] = fakeData(304, 144, function(_, y)
+    if y >= 20 then return 0.2, 0.2, 0.2 end
+    return 0.9, 0.9, 0.9
+  end)
+  eq(bandTop("flat", 304, 144), nil,
+     "and neither is a band over half the picture")
+
+  -- A file the host will not hand back, or hands back at another size, is
+  -- measured as no band rather than guessed at.
+  eq(bandTop("missing", 304, 144), nil, "an unreadable file has no band")
+  made["wrong"] = fakeData(160, 144, function() return 0, 0, 0 end)
+  eq(bandTop("wrong", 304, 144), nil, "and neither has one at the wrong size")
+
+  love.image = nil
+  eq(bandTop("wide", 304, 144), nil,
+     "a host with no love.image trims nothing, which is what it did before")
+end
+
+do
+  io.write("...and the bars are clamped to it\n")
+  -- Source-shape, because the clamp is one `math.min` inside `coverQuads` and
+  -- coverQuads needs a live Image to drive.  What can go wrong here is the
+  -- clamp being dropped, or being written against `ih` again, and both of
+  -- those are visible in the text.
+  local handle = assert(io.open("main.lua", "r"))
+  local text = handle:read("*a")
+  handle:close()
+  ok(text:find("local floorV = pictureBottom(img) or ih", 1, true) ~= nil,
+     "the bars take the picture's floor, and the whole picture when it has "
+     .. "no band")
+  ok(text:find("local v1 = math.min(floorV, (r.y + r.h - dy) / sy)",
+                1, true) ~= nil,
+     "and every bar's source rectangle stops there")
+  ok(text:find("surfW or 0, surfH or 0, floorV)", 1, true) ~= nil,
+     "with the floor in the quad cache's key, or the first backdrop's band "
+     .. "would be used for every backdrop after it")
+end
+
 io.write(("\n%d passed, %d failed\n"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

@@ -179,6 +179,61 @@ local BACKDROP_DIR = "assets/backdrops/"
 local images = {}
 local loaded = false
 
+-- ------- the flat band along the bottom of a backdrop
+--
+-- Every backdrop is authored with its last rows in ONE flat colour, because
+-- those rows are the ones the cart's message box sits on: 48 of them on the
+-- 160-wide art, which is exactly the box's six tiles, and 40 on the 304-wide
+-- art.  On the game screen they are never seen.
+--
+-- They ARE seen in the bars.  On the classic surface this mod bleeds the WIDE
+-- art into the wings either side (see `artLayout`), and out there the cart has
+-- no message box -- so the band arrives as a slab of flat colour across the
+-- bottom of both wings, which is the report: *"there is still a bar of solid
+-- color at the bottom, can we make it so those are cut off?"*
+--
+-- So they are cut off.  `coverQuads` clamps every bar's source rectangle to
+-- stop at this row, and whatever is left of the bar keeps the letterbox
+-- colour -- the picture ends where the picture stops being a picture.
+--
+-- Measured off the file rather than declared, so re-authored art is measured
+-- rather than trimmed on an assumption.  A band under eight rows is not a
+-- band (a one-row edge is ordinary art), and a "band" over half the picture
+-- is a flat backdrop that has nothing to trim.
+local BAND_MIN, bandTop = 8, setmetatable({}, { __mode = "k" })
+
+local function measureBand(path, iw, ih)
+  if not (love.image and type(love.image.newImageData) == "function") then
+    return nil
+  end
+  local ok, data = pcall(love.image.newImageData, path)
+  if not ok or not data then return nil end
+  local okDim, dw, dh = pcall(data.getDimensions, data)
+  if not okDim or dw ~= iw or dh ~= ih then return nil end
+  local top = ih
+  for y = ih - 1, 0, -1 do
+    local r0, g0, b0, a0 = data:getPixel(0, y)
+    local flat = true
+    for x = 1, iw - 1 do
+      local r, g, b, a = data:getPixel(x, y)
+      if r ~= r0 or g ~= g0 or b ~= b0 or a ~= a0 then flat = false break end
+    end
+    if not flat then break end
+    top = y
+  end
+  local rows = ih - top
+  if rows < BAND_MIN or rows > ih / 2 then return nil end
+  return top
+end
+
+-- Where the picture stops being a picture, for the bars.  nil when the whole
+-- of it is one.
+local function pictureBottom(img)
+  local mark = bandTop[img]
+  if mark == nil or mark == false then return nil end
+  return mark
+end
+
 local function loadImage(layout, name)
   -- On Gold a slot may be an alias for a file drawn under another name; see
   -- GEN2_SLOT_FILE below.  Resolved here so every caller in the chain --
@@ -192,6 +247,9 @@ local function loadImage(layout, name)
     -- Nearest filtering: these are pixel backdrops sitting behind pixel
     -- sprites, and the whole composite is integer-scaled afterwards.
     img:setFilter("nearest", "nearest")
+    -- Once per file, off the file: see measureBand.
+    local iw, ih = img:getDimensions()
+    bandTop[img] = measureBand(path, iw, ih) or false
     images[key] = img
   else
     images[key] = false
@@ -1194,9 +1252,13 @@ local function coverQuads(img, iw, ih, view, rects, surfW, surfH)
   local sx, sy, dx, dy = surfaceFit(iw, ih, surfW, surfH, view)
   if not sx then return nil end
   local scale = sx
-  local key = ("%d:%d:%d:%d:%d:%d:%d:%d")
+  -- The bars stop where the flat band starts; see measureBand.  On the game
+  -- screen those rows are under the cart's message box, in the wings there is
+  -- no message box, and a slab of flat colour is not scenery.
+  local floorV = pictureBottom(img) or ih
+  local key = ("%d:%d:%d:%d:%d:%d:%d:%d:%d")
     :format(view.ww or 0, view.wh or 0, view.ox or 0, view.oy or 0,
-            view.vpw or 0, view.vph or 0, surfW or 0, surfH or 0)
+            view.vpw or 0, view.vph or 0, surfW or 0, surfH or 0, floorV)
   local cached = quadCache[img]
   -- Every value the caller needs, on the cached path too.  Dropping `sy` here
   -- made the FIRST frame right and every frame after it throw -- inside the
@@ -1211,7 +1273,7 @@ local function coverQuads(img, iw, ih, view, rects, surfW, surfH)
     local u0 = math.max(0, (r.x - dx) / sx)
     local v0 = math.max(0, (r.y - dy) / sy)
     local u1 = math.min(iw, (r.x + r.w - dx) / sx)
-    local v1 = math.min(ih, (r.y + r.h - dy) / sy)
+    local v1 = math.min(floorV, (r.y + r.h - dy) / sy)
     if u1 > u0 and v1 > v0 then
       cached.quads[i] = love.graphics.newQuad(u0, v0, u1 - u0, v1 - v0, iw, ih)
       cached.at = cached.at or {}
@@ -1532,6 +1594,10 @@ mod.exports.arenaArtLayout = artLayout
 -- the hook's payload, and the one that was wrong on every Gen 2 battle that
 -- was not CLASSIC + FIXED.
 mod.exports.arenaPanelRect = panelRect
+-- Published for tests/arenableed_test.lua: where the picture stops being a
+-- picture.  See measureBand -- the rows below it are the cart's message box's
+-- paper, and the bars have no message box.
+mod.exports.arenaBandTop = measureBand
 mod.exports.arenaSeeView = function(view) lastView = view end
 
 -- The Gen 2 selection, for tests.  All of it is pure -- a map header and a

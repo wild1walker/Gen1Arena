@@ -45,6 +45,18 @@ love.graphics.getDimensions = function() return CURRENT.w, CURRENT.h end
 love.graphics.getWidth = function() return CURRENT.w end
 love.graphics.getHeight = function() return CURRENT.h end
 
+local realNewImageData = love.image.newImageData
+love.image.newImageData = function(source, ...)
+  if type(source) == "string" then
+    local handle = io.open((source:gsub("^%./", "")), "rb")
+    if not handle then error("no such file: " .. source, 0) end
+    local bytes = handle:read("*a")
+    handle:close()
+    return realNewImageData(love.filesystem.newFileData(bytes, source), ...)
+  end
+  return realNewImageData(source, ...)
+end
+
 local realNewImage = love.graphics.newImage
 love.graphics.newImage = function(source, ...)
   if type(source) == "string" then
