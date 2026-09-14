@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.28.0
+
+- **One photograph, at one scale.** Reported with a Crystal battle at BATTLE
+  SIZE = FILL: a crisp rectangle of backdrop in the middle of the screen and a
+  visibly bigger, blurrier copy of the same scene around it, with a hard seam
+  between them. It reads as a cut-out, and the cause was arithmetic.
+
+  The field is painted **on the battle surface** — 160×144 or 304×144 — and
+  the engine then scales that surface to the window. The bars around it were
+  being filled by cover-fitting the *same picture to the whole window*, which
+  is a different and always larger scale. So the screen carried one photograph
+  at two magnifications with the surface's edge as the join, and the wider the
+  window the worse it got.
+
+  The bars take the surface's own scale and the surface's own alignment now,
+  so the composite is one continuous image and the seam cannot exist. Nothing
+  is stretched to reach: a bar the picture does not cover keeps the surround's
+  colour rather than a blown-up smear of the field.
+
+- **The art is picked for the shape of the screen, not for the setting.**
+  BATTLE LAYOUT picks the *surface*; the art used to be picked to match it.
+  That is right only while the surface is the whole picture. The moment the
+  window is wider — which is what BATTLE SIZE = FILL does on any normal
+  monitor — there are side bars, and a 160-wide picture has nothing outside
+  itself to put in them.
+
+  A 304×144 backdrop has 72 authored columns to spare on each side of a
+  160-wide surface, so that is what gets asked for as soon as there are bars,
+  on the classic surface too. It is centred at 1:1, so the field is exactly
+  the picture it always was and the bars are the rest of the same photograph.
+
+  Every slot has both sizes — all 31 scenes and all 27 town variants — so this
+  changes which file is loaded and nothing else. Gold's recoloured town roofs
+  have no wide version and fall through to the plain scene, as they already do
+  when their folder is absent.
+
 ## 0.27.0
 
 - **EDGE TO EDGE off left the backdrop standing in a white frame.** Reported

@@ -1146,22 +1146,74 @@ local function coverFit(iw, ih, ww, wh)
   return scale, (ww - iw * scale) * 0.5, (wh - ih * scale) * 0.5
 end
 
-local function coverQuads(img, iw, ih, view, rects)
-  local scale, dx, dy = coverFit(iw, ih, view.ww or 0, view.wh or 0)
-  if not scale then return nil end
-  local key = ("%d:%d:%d:%d:%d:%d")
+-- ------- the bars are the SAME photograph, at the SAME scale
+--
+-- Reported with a screenshot of a Crystal battle at BATTLE SIZE = FILL: a
+-- rectangle of crisp backdrop in the middle of the screen and a visibly
+-- bigger, blurrier copy of the same scene around it, with a hard seam between
+-- them.  It reads as a cut-out, and the cause is arithmetic rather than art.
+--
+-- The field is painted ON the battle surface: `drawCover` lays the picture
+-- over 160x144 (or 304x144) and the engine then scales that surface to the
+-- window by `view.scale`.  The bars used to be filled by cover-fitting the
+-- same picture to the WHOLE WINDOW, which is a different and always larger
+-- scale.  So the screen carried one photograph at two magnifications with the
+-- surface's edge as the join -- and the wider the window, the worse the
+-- mismatch.
+--
+-- One scale now, the surface's, with the picture aligned to the surface
+-- exactly as `drawCover` aligned it there.  Then the composite is one
+-- continuous image and the seam cannot exist: the bars are the parts of the
+-- picture that fall outside the surface, at the size they are drawn inside it.
+--
+-- Which is also why the picture has to be the WIDE one whenever there are
+-- side bars -- 304x144 against 160x144 is 72 real authored pixels either side
+-- of the surface, and a 160-wide picture has nothing outside itself to show.
+-- See `artLayout`.
+local function surfaceFit(iw, ih, surfW, surfH, view)
+  if not (iw > 0 and ih > 0 and surfW > 0 and surfH > 0) then return nil end
+  local vpw, vph = view.vpw or 0, view.vph or 0
+  if vpw <= 0 or vph <= 0 then return nil end
+  -- The scale the engine actually put the surface on screen at, read off the
+  -- viewport rather than taken from `view.scale`: under BATTLE SIZE = FILL it
+  -- is fractional and the two can disagree.
+  local sx, sy = vpw / surfW, vph / surfH
+  -- `drawCover`'s own placement on the surface, in surface pixels.
+  local cover = math.max(surfW / iw, surfH / ih)
+  local dx = (surfW - iw * cover) * 0.5
+  local dy = (surfH - ih * cover) * 0.5
+  -- ...carried out to the window.
+  return cover * sx, cover * sy,
+         (view.ox or 0) + dx * sx, (view.oy or 0) + dy * sy
+end
+
+local function coverQuads(img, iw, ih, view, rects, surfW, surfH)
+  local sx, sy, dx, dy = surfaceFit(iw, ih, surfW, surfH, view)
+  if not sx then return nil end
+  local scale = sx
+  local key = ("%d:%d:%d:%d:%d:%d:%d:%d")
     :format(view.ww or 0, view.wh or 0, view.ox or 0, view.oy or 0,
-            view.vpw or 0, view.vph or 0)
+            view.vpw or 0, view.vph or 0, surfW or 0, surfH or 0)
   local cached = quadCache[img]
   if cached and cached.key == key then return cached, scale, dx, dy end
   cached = { key = key, quads = {} }
   for i, r in ipairs(rects) do
-    cached.quads[i] = love.graphics.newQuad(
-      (r.x - dx) / scale, (r.y - dy) / scale,
-      r.w / scale, r.h / scale, iw, ih)
+    -- Clamped to the picture.  Outside it there is nothing authored, and a
+    -- quad that runs off the source is the stretch this is here to stop -- so
+    -- the bar is trimmed to the part the picture can actually answer for and
+    -- whatever is left keeps the letterbox colour.
+    local u0 = math.max(0, (r.x - dx) / sx)
+    local v0 = math.max(0, (r.y - dy) / sy)
+    local u1 = math.min(iw, (r.x + r.w - dx) / sx)
+    local v1 = math.min(ih, (r.y + r.h - dy) / sy)
+    if u1 > u0 and v1 > v0 then
+      cached.quads[i] = love.graphics.newQuad(u0, v0, u1 - u0, v1 - v0, iw, ih)
+      cached.at = cached.at or {}
+      cached.at[i] = { x = dx + u0 * sx, y = dy + v0 * sy }
+    end
   end
   quadCache[img] = cached
-  return cached, scale, dx, dy
+  return cached, scale, dx, dy, sy
 end
 
 -- FAITHFUL RATIO's mobile lock, asked the way the renderer asks it.
@@ -1255,6 +1307,52 @@ local function barColor()
   return r, g, b
 end
 
+-- ------- which SIZE of the art this screen wants
+--
+-- Not which layout the player set: which shape has to be covered.
+--
+-- BATTLE LAYOUT picks the SURFACE -- 160x144 classic, 304x144 wide -- and the
+-- art used to be picked to match it.  That is right only when the surface is
+-- the whole picture.  The moment the window is wider than the surface there
+-- are side bars, and a 160-wide picture has nothing outside itself to put in
+-- them: every honest answer is either black or a blown-up copy of the field,
+-- and the blown-up copy is what was reported (BATTLE SIZE = FILL, a crisp
+-- rectangle in the middle and a bigger blurry one around it).
+--
+-- A 304x144 picture has 72 authored columns to spare on each side of a 160
+-- surface.  So when there are side bars the WIDE art is asked for even on the
+-- classic surface: `drawCover` centres it at 1:1, which puts its middle 160
+-- columns on the field exactly as before, and the bars get the rest of the
+-- same photograph at the same scale.
+--
+-- Safe for every slot.  All 31 top-level scenes and all 27 town variants
+-- exist in both sizes; the only og-without-wide files are Gold's recoloured
+-- town roofs, which already fall through to the plain scene when their folder
+-- is absent (see GEN2_VARIANT_DIR).
+--
+-- Read off the LAST frame's letterbox rather than measured here, because this
+-- runs inside the battle's draw and the view is the renderer's answer at
+-- composite time.  One frame of lag on a window resize, which is a frame
+-- nobody sees.
+local lastView = nil
+
+local function wantsWideArt()
+  local view = lastView
+  if type(view) ~= "table" then return false end
+  local ww, vpw = view.ww or 0, view.vpw or 0
+  if ww <= 0 or vpw <= 0 then return false end
+  -- A bar at all, rather than a rounding remainder.
+  return (ww - vpw) >= 2
+end
+
+-- The directory to load this battle's backdrop from, given the surface it is
+-- being drawn on.  A wide surface always wants the wide art; a classic one
+-- wants it too as soon as there is anywhere for the extra to go.
+local function artLayout(layout)
+  if layout ~= "og" then return layout end
+  return wantsWideArt() and "wide" or "og"
+end
+
 local function bleedInto(view)
   local img = bleedImage
   -- Claimed, not read: the hook runs once per frame after the battle drew,
@@ -1299,19 +1397,28 @@ local function bleedInto(view)
 
   local iw, ih = img:getDimensions()
   if iw <= 0 or ih <= 0 then return end
-  local cut, scale = coverQuads(img, iw, ih, view, rects)
+  local cut, sx, _, _, sy = coverQuads(img, iw, ih, view, rects, bleedW, bleedH)
   if not cut then return end
 
+  -- The bars the picture cannot reach get the surround's own colour first, so
+  -- a picture that does not span the whole window leaves the engine's black
+  -- rather than a stretched smear of itself.
+  local r0, g0, b0 = barColor()
   local g = love.graphics
-  g.setColor(1, 1, 1, 1)
-  -- Eight draws at most, each the part of the covering picture that falls
-  -- where that bar is, at the cover's own scale.  Through no shader, for the
-  -- reason under paintField: this is the same photograph, and bars in four
-  -- greys beside a field in colour would be worse than either.
   withoutShader(function()
-    for i, r in ipairs(rects) do
-      local quad = cut.quads[i]
-      if quad then g.draw(img, quad, r.x, r.y, 0, scale, scale) end
+    g.setColor(r0, g0, b0, 1)
+    for _, r in ipairs(rects) do
+      realRectangle("fill", r.x, r.y, r.w, r.h)
+    end
+    g.setColor(1, 1, 1, 1)
+    -- Then the picture, at the SURFACE's scale and the surface's alignment, so
+    -- the bars and the field are one continuous photograph with no seam.
+    -- Through no shader, for the reason under paintField: this is the same
+    -- picture, and bars in four greys beside a field in colour would be worse
+    -- than either.
+    for i in ipairs(rects) do
+      local quad, at = cut.quads[i], cut.at and cut.at[i]
+      if quad and at then g.draw(img, quad, at.x, at.y, 0, sx, sy) end
     end
   end)
 end
@@ -1326,6 +1433,15 @@ mod.exports.paintsWithoutShader = withoutShader
 mod.exports.worldTaken = worldTaken
 mod.exports.bleedRects = bleedRects
 mod.exports.bleedCover = coverFit
+-- The arithmetic the seam was in: where the picture sits, and at what scale,
+-- once the engine has put the surface on screen.  Pure -- four numbers and a
+-- view in, a scale and an origin out -- and separated for the same reason
+-- `bleedRects` is.
+mod.exports.bleedSurfaceFit = surfaceFit
+-- Which SIZE of the art a screen wants, and the view it reads that from.
+-- Exposed together because the decision is only as good as what it is given.
+mod.exports.arenaArtLayout = artLayout
+mod.exports.arenaSeeView = function(view) lastView = view end
 
 -- The Gen 2 selection, for tests.  All of it is pure -- a map header and a
 -- battle in, a slot name out -- which is exactly the part that can be wrong
@@ -2027,7 +2143,7 @@ local function wrap(original, surfaceW, surfaceH, layout)
     -- The nickname prompt deliberately blanks the field to white; leave it.
     if battle and battle.blankForAskName then return original(...) end
 
-    local img = pickBackdrop(battle, layout)
+    local img = pickBackdrop(battle, artLayout(layout))
     if not img then return original(...) end
 
     pendingImage, pendingW, pendingH = img, surfaceW, surfaceH
@@ -2617,7 +2733,7 @@ local function installGen2()
 
     local chosen
     local okPick, problem = pcall(function()
-      chosen = pickBackdrop(self, layout)
+      chosen = pickBackdrop(self, artLayout(layout))
     end)
     if not okPick then
       mod.log:warn("no backdrop this frame: %s", tostring(problem))
@@ -2934,6 +3050,8 @@ mod.hooks:wrap("core.update", function(nextLink, game, dt)
 end)
 
 mod.hooks:wrap("render.letterbox", function(nextLink, view)
+  -- Kept for the NEXT frame's `artLayout`; see wantsWideArt.
+  if type(view) == "table" then lastView = view end
   local ok, err = pcall(bleedInto, view)
   if not ok then
     bleedImage = nil

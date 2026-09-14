@@ -975,15 +975,29 @@ do
 end
 
 do
-  io.write("EDGE TO EDGE on is still the picture\n")
+  io.write("EDGE TO EDGE on, and a picture with nothing outside itself\n")
+  -- The harness's backdrop is square and covers the whole surface once
+  -- `drawCover` has scaled it, so there is no part of it that falls in a bar.
+  -- That used to be filled anyway, by cover-fitting the same picture to the
+  -- WHOLE WINDOW -- a bigger scale than the surface got -- which is the seam
+  -- the report was about: one photograph at two magnifications with the
+  -- surface's edge as the join.  There is nothing honest to draw here, so the
+  -- bars are the surround's own colour and the picture is not stretched into
+  -- them.
   local self = screen({ drawsPics = false })
   frame(self)
-  local rectsBefore = #kinds("rect")
+  local before = #fills
   local drawsBefore = #draws
   bars(VIEW)
-  eq(#kinds("rect"), rectsBefore,
-     "no flat fill: the bars are the backdrop's own edge, as they were")
-  ok(#draws > drawsBefore, "which is drawn, eight pieces of one picture")
+
+  local painted = {}
+  for i = before + 1, #fills do
+    if fills[i].kind == "rect" then painted[#painted + 1] = fills[i] end
+  end
+  eq(#painted, 8, "all eight bars are answered for")
+  eq(#draws, drawsBefore,
+     "and none of them is a blown-up copy of a picture that ends at the "
+     .. "surface: a 160x144 backdrop has nothing outside itself to show")
 end
 
 do

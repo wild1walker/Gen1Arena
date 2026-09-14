@@ -96,6 +96,99 @@ ok(type(bleedCover) == "function", "and the cover fit with it")
 ok(mod.hooked["render.letterbox"] ~= nil,
   "and the mod takes the seam the engine documents for void art")
 
+-- ---------------------------------------------- one picture, one scale
+
+-- Reported with a screenshot: a crisp rectangle of backdrop in the middle of
+-- a Crystal battle and a visibly bigger, blurrier copy of the same scene
+-- around it, with a hard seam between them.
+--
+-- The field is painted ON the battle surface and the engine scales that
+-- surface to the window.  The bars used to be filled by cover-fitting the
+-- same picture to the WHOLE WINDOW instead -- a different and always larger
+-- scale -- so the screen carried one photograph at two magnifications with
+-- the surface's edge as the join.
+--
+-- This is the arithmetic that replaced it: the picture's scale and origin, in
+-- window pixels, taken from where the SURFACE landed.
+do
+  io.write("the bars are the same picture at the same scale\n")
+
+  local surfaceFit = mod.exports.bleedSurfaceFit
+  ok(type(surfaceFit) == "function", "the placement is exposed")
+
+  -- 160x144 doubled and centred in a 400x400 window.
+  local view = { ww = 400, wh = 400, ox = 40, oy = 56, vpw = 320, vph = 288 }
+
+  -- A WIDE picture on the classic surface: `drawCover` centres it at 1:1, so
+  -- its middle 160 columns are the field and 72 columns hang off each side.
+  local sx, sy, dx, dy = surfaceFit(304, 144, 160, 144, view)
+  eq(sx, 2, "the picture is drawn at the surface's own scale, not the window's")
+  eq(sy, 2, "on both axes")
+  eq(dx, 40 - 72 * 2,
+     "starting 72 authored columns left of the surface, which is exactly what "
+     .. "a 304-wide picture has to spare against a 160-wide one")
+  eq(dy, 56, "and level with it")
+
+  -- The same picture, same surface, under BATTLE SIZE = FILL: the engine puts
+  -- the surface on screen at a fractional scale, and the picture follows it
+  -- rather than being re-fitted to the window.
+  local fill = { ww = 400, wh = 400, ox = 20, oy = 0, vpw = 360, vph = 324 }
+  sx, sy, dx = surfaceFit(304, 144, 160, 144, fill)
+  eq(sx, 360 / 160, "FILL's fractional scale is the surface's, and the "
+     .. "picture takes it too -- which is the whole of the seam")
+  eq(dx, 20 - 72 * (360 / 160), "and the offset scales with it")
+
+  -- An OG picture on the classic surface covers it exactly, so there is
+  -- nothing outside it: the origin IS the surface's origin.
+  sx, sy, dx, dy = surfaceFit(160, 144, 160, 144, view)
+  eq(sx, 2, "an exactly-sized picture is 1:1 on the surface")
+  eq(dx, 40, "and starts where the surface starts")
+  eq(dy, 56, "on both axes -- there is no outside to show")
+
+  -- A degenerate view has no answer rather than a wrong one.
+  eq(tostring(surfaceFit(304, 144, 160, 144,
+                         { ww = 400, wh = 400, vpw = 0, vph = 0 })),
+     "nil", "a surface with no area is not a placement")
+  eq(tostring(surfaceFit(0, 144, 160, 144, view)), "nil",
+     "and neither is a picture with none")
+end
+
+-- --------------------------------------- which size of the art it asks for
+
+do
+  io.write("the art is picked for the shape, not for the setting\n")
+
+  local artLayout = mod.exports.arenaArtLayout
+  local seeView = mod.exports.arenaSeeView
+  ok(type(artLayout) == "function" and type(seeView) == "function",
+     "the choice and the view it reads are both exposed")
+
+  -- Nothing seen yet: the surface is all there is, so the classic art is right.
+  seeView(nil)
+  eq(artLayout("og"), "og", "with no frame behind it, the surface's own size")
+  eq(artLayout("wide"), "wide", "and a wide surface is always wide")
+
+  -- A window exactly the surface's width: no bars, nothing to spare, no
+  -- reason to reach for a bigger picture.
+  seeView({ ww = 320, wh = 400, ox = 0, oy = 56, vpw = 320, vph = 288 })
+  eq(artLayout("og"), "og", "a window with no side bars keeps the small art")
+
+  -- Side bars: a 160-wide picture has nothing outside itself to put in them,
+  -- and a 304-wide one has 72 authored columns each side.  This is the
+  -- reported case -- BATTLE SIZE = FILL, classic layout, a wide window.
+  seeView({ ww = 1000, wh = 400, ox = 340, oy = 56, vpw = 320, vph = 288 })
+  eq(artLayout("og"), "wide",
+     "side bars ask for the wide art even on the classic surface, because "
+     .. "that is the only picture with anything to put in them")
+  eq(artLayout("wide"), "wide", "and the wide surface is unchanged")
+
+  -- A one-pixel remainder from an odd window is not a bar.
+  seeView({ ww = 321, wh = 400, ox = 0, oy = 56, vpw = 320, vph = 288 })
+  eq(artLayout("og"), "og", "a rounding remainder is not somewhere to put a picture")
+
+  seeView(nil)
+end
+
 local function by(rects)
   local out = {}
   for _, r in ipairs(rects or {}) do out[r.slice] = r end

@@ -145,7 +145,7 @@ do
     "...and it is drawCover that it wraps")
 
   -- The bars around a wide battle carry the same picture's edge.
-  local bleed = src:match("\n(  local g = love%.graphics\n  g%.setColor%(1, 1, 1, 1%)\n.-\n  end%)\n)")
+  local bleed = src:match("\n(  local r0, g0, b0 = barColor%(%)\n.-\n  end%)\n)")
   ok(bleed ~= nil, "the bleed into the letterbox bars is found")
   ok(bleed and bleed:find("withoutShader", 1, true) ~= nil,
     "and it is inside the guard too -- bars in four greys beside a field in "
