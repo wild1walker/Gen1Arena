@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.31.0
+
+- **BATTLE SIZE = FILL fills the screen.** FILL means "no bars", and the
+  engine's own FILL only gets half of that: it scales the battle surface to the
+  window's height, which closes the bands above and below and leaves the ones
+  at the sides, because a 10:9 or 19:9 surface is not the shape of a display.
+
+  The backdrop can close them, because unlike the surface it is allowed to hang
+  off the edge — nothing outside the surface is interactive, so the only cost
+  of overflowing is the part of the scene nobody sees. Under FILL it is now
+  drawn big enough to reach every edge of the window, on both cartridges and
+  both layouts. No bars, and no band of flat colour anywhere.
+
+  **The battlers still land where they belong.** A uniform zoom keeps exactly
+  one line registered with the scene the art was composed against, and that
+  line is the surface's own centre — so the displacement anywhere is
+  `(zoom − 1)` times the distance from it, and it is smallest exactly where the
+  battlers and the HUD are. The picture only slides off that centre when the
+  surface itself sits off-centre in the window (a handheld puts it high), and
+  then by the minimum distance that covers and never past it.
+
+  Under FIXED nothing changes. There the gap is whatever the integer scale left
+  over, which can be a quarter of the screen, and zooming the scene that far to
+  chase it really would move the ground out from under them — so FIXED keeps
+  its bars.
+
 ## 0.30.0
 
 - **Reverted 0.29.0's bottom band.** It filled everything below the picture

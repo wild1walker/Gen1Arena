@@ -153,6 +153,78 @@ do
      "and neither is a picture with none")
 end
 
+-- ------------------------------------------ BATTLE SIZE = FILL fills it
+
+-- "Can we not just make it, when FILL is enabled, use our backgrounds to
+-- completely fill the screen, getting rid of the bars.  Do the math so the way
+-- we zoom / let things hang off the side, the POKeMON still land at the
+-- correct spots."
+--
+-- So: the picture is drawn big enough to reach every edge of the window, and
+-- the arithmetic that does it is here, because a hair out is a line of
+-- surround down the side of somebody's display and a lot out is the ground
+-- moving out from under a battler.
+
+do
+  io.write("FILL covers the window, and stays registered with the surface\n")
+
+  local fillZoom = mod.exports.arenaFillZoom
+  local surfaceFit = mod.exports.bleedSurfaceFit
+  ok(type(fillZoom) == "function", "the overflow factor is exposed")
+
+  -- A reporter's phone: the wide surface drawn at 6x, sitting HIGH in the
+  -- window -- 78 above it and 237 below.
+  local phone = { ww = 2556, wh = 1179, ox = 366, oy = 78, vpw = 1824, vph = 864 }
+
+  eq(fillZoom(304, 144, 304, 144, phone) > 1, true,
+     "a window wider than the surface needs the picture bigger than it")
+
+  local function covers(iw, ih, W, H, view)
+    local z = fillZoom(iw, ih, W, H, view)
+    local sx, sy, px, py = surfaceFit(iw, ih, W, H, view, z)
+    local pw, ph = iw * sx, ih * sy
+    return px <= 0.001 and py <= 0.001
+       and px + pw >= view.ww - 0.001 and py + ph >= view.wh - 0.001, z, px, py
+  end
+
+  local got, z = covers(304, 144, 304, 144, phone)
+  eq(got, true, "and at that zoom it reaches all four edges -- no bar anywhere")
+  ok(z < 1.5, "without overshooting: the zoom is what moves the scene out from "
+     .. "under the battlers, so it is the smallest one that can cover")
+
+  -- The same picture on the classic surface, which is where the wide art is
+  -- borrowed to give the sides something real to show.
+  eq((covers(304, 144, 160, 144,
+             { ww = 2556, wh = 1179, ox = 798, oy = 78, vpw = 960, vph = 864 })),
+     true, "the classic surface with wide art covers it too")
+
+  -- An ordinary desktop, where the surface IS centred.
+  local desk = { ww = 1920, wh = 1080, ox = 48, oy = 108, vpw = 1824, vph = 864 }
+  eq((covers(304, 144, 304, 144, desk)), true, "and a centred window covers")
+
+  -- ---- the registration: centred on the SURFACE wherever that can cover
+  --
+  -- Centred on the surface is the composition the art was drawn against.  The
+  -- picture only slides off it when the surface is not centred in the window
+  -- and covering needs the slide -- and then by the minimum, never past.
+  local z2 = fillZoom(304, 144, 304, 144, desk)
+  local sx2, _, px2, py2 = surfaceFit(304, 144, 304, 144, desk, z2)
+  local pw2 = 304 * sx2
+  eq(math.abs((px2 + pw2 / 2) - (desk.ox + desk.vpw / 2)) < 0.5, true,
+     "on a centred window the picture's middle is the surface's middle")
+
+  local _, _, _, pyPhone = surfaceFit(304, 144, 304, 144, phone,
+                                      fillZoom(304, 144, 304, 144, phone))
+  eq(pyPhone, math.min(0, pyPhone), "and a slid one never leaves the top open")
+
+  -- ---- and nothing happens at all when there is nothing to cover
+  eq(fillZoom(304, 144, 304, 144,
+              { ww = 1824, wh = 864, ox = 0, oy = 0, vpw = 1824, vph = 864 }), 1,
+     "a window the picture already fills asks for no zoom")
+  eq(fillZoom(304, 144, 304, 144, nil), 1, "no view, no zoom")
+  eq(fillZoom(0, 144, 304, 144, phone), 1, "no picture, no zoom")
+end
+
 -- --------------------------------------- which size of the art it asks for
 
 do

@@ -980,14 +980,49 @@ end
 -- Cover the surface with the backdrop without distorting it: scale to the
 -- larger of the two axis ratios and centre the overflow.  A backdrop authored
 -- at exactly 160x144 or 304x144 lands 1:1 and this is a no-op.
-local function drawCover(img, w, h)
+-- ------- BATTLE SIZE = FILL: the picture covers the DISPLAY
+--
+-- FILL means "no bars".  The engine's own FILL scales the battle SURFACE to
+-- the window, which removes the bars above and below it -- and leaves the ones
+-- at the sides, because the surface is 10:9 or 19:9 and a display is neither.
+-- The backdrop can close those, because unlike the surface it is allowed to
+-- hang off the edge: nothing outside the surface is interactive, so the only
+-- cost of overflowing is the part of the scene nobody sees.
+--
+-- `zoom` is that overflow factor -- how much bigger than the surface the
+-- picture has to be drawn to reach every edge of the window -- and it is
+-- applied in TWO places that must agree exactly: here, where the picture goes
+-- on the surface, and in the letterbox pass, where the rest of it goes in the
+-- space around it.  One number, computed once per frame by `fillZoom`, so the
+-- seam between them cannot exist.
+--
+-- ------- and the POKeMON still land where they belong
+--
+-- The cart draws its battlers at fixed places on the surface, and this cannot
+-- move them.  A uniform zoom keeps exactly ONE line registered with the scene
+-- it was composed against, and the one chosen is the SURFACE'S CENTRE -- the
+-- scaling is symmetric about it on both axes, so the displacement anywhere is
+-- `(zoom - 1)` times the distance from that centre, and it is smallest exactly
+-- where the battlers and the HUD are.
+--
+-- Which is also why this is only offered under FILL, and why it is nearly free
+-- there.  FILL has already scaled the surface to the window's HEIGHT, so the
+-- only gap left is horizontal, and against the 304-wide art that gap is a few
+-- percent on an ordinary display rather than the near-doubling it would be
+-- against the 160-wide one.  A couple of percent about the centre moves a
+-- battler's footing by a pixel or two.  Under FIXED the gap is whatever the
+-- integer scale left over, which can be a quarter of the screen, and zooming
+-- the scene that far to chase it would move the ground out from under them --
+-- so FIXED keeps its bars.
+local function drawCover(img, w, h, zoom)
   local iw, ih = img:getDimensions()
-  if iw == w and ih == h then
+  zoom = zoom or 1
+  if iw == w and ih == h and zoom == 1 then
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.draw(img, 0, 0)
     return
   end
-  local scale = math.max(w / iw, h / ih)
+  local scale = math.max(w / iw, h / ih) * zoom
   local dx = (w - iw * scale) * 0.5
   local dy = (h - ih * scale) * 0.5
   love.graphics.setColor(1, 1, 1, 1)
@@ -1000,7 +1035,7 @@ local active = false          -- inside a wrapped battle draw
 local pendingImage = nil      -- backdrop chosen for this frame
 -- ...and the one to carry into the bars around it, claimed by the letterbox
 -- pass at the end of the same frame.  See the note over bleedInto.
-local bleedImage, bleedW, bleedH = nil, OG_W, OG_H
+local bleedImage, bleedW, bleedH, bleedZoom = nil, OG_W, OG_H, 1
 local pendingW, pendingH = OG_W, OG_H
 local outerCanvas = nil       -- the canvas bound when the battle draw began
 local consumed = false        -- the field fill has already been replaced
@@ -1041,6 +1076,20 @@ local function withoutShader(draw)
   if not ok then error(err, 0) end
 end
 
+-- Whether THIS battle is on BATTLE SIZE = FILL, asked of the engine rather
+-- than of the save: `wantsFillScale` is the same method the renderer reads to
+-- decide the surface's own scale, and both generations carry it.
+local function fillWanted(battle)
+  if type(battle) ~= "table" then return false end
+  if type(battle.wantsFillScale) ~= "function" then return false end
+  local ok, wants = pcall(battle.wantsFillScale, battle)
+  return ok and wants and true or false
+end
+
+-- The zoom this frame's picture is drawn at, on the surface and in the bars
+-- alike.  Claimed by the letterbox pass the same way `bleedImage` is.
+local pendingZoom = 1
+
 local function paintField()
   if devOption("field_test") then
     love.graphics.setColor(1, 0, 1, 1)
@@ -1049,7 +1098,7 @@ local function paintField()
     return
   end
   withoutShader(function()
-    drawCover(pendingImage, pendingW, pendingH)
+    drawCover(pendingImage, pendingW, pendingH, pendingZoom)
   end)
 end
 
@@ -1170,7 +1219,30 @@ end
 -- side bars -- 304x144 against 160x144 is 72 real authored pixels either side
 -- of the surface, and a 160-wide picture has nothing outside itself to show.
 -- See `artLayout`.
-local function surfaceFit(iw, ih, surfW, surfH, view)
+-- How much bigger than the surface the picture must be drawn to reach every
+-- edge of the window.  1 when it already does, or when FILL is off.
+--
+-- Pure, and separated for the same reason `bleedRects` is: this is the whole
+-- of what can be wrong about "fills the screen", it is four divisions, and
+-- getting it wrong by a hair is a one-pixel line of surround down the side of
+-- somebody's display.
+local function fillZoom(iw, ih, surfW, surfH, view)
+  if not (iw > 0 and ih > 0 and surfW > 0 and surfH > 0) then return 1 end
+  if type(view) ~= "table" then return 1 end
+  local ww, wh = view.ww or 0, view.wh or 0
+  local vpw, vph = view.vpw or 0, view.vph or 0
+  if ww <= 0 or wh <= 0 or vpw <= 0 or vph <= 0 then return 1 end
+  -- The picture's size on screen as `drawCover` would lay it at zoom 1.
+  local cover = math.max(surfW / iw, surfH / ih)
+  local onW = iw * cover * (vpw / surfW)
+  local onH = ih * cover * (vph / surfH)
+  if onW <= 0 or onH <= 0 then return 1 end
+  -- Uniform: the largest of the two, so neither axis is left short and the
+  -- picture is never distorted to fit.
+  return math.max(1, ww / onW, wh / onH)
+end
+
+local function surfaceFit(iw, ih, surfW, surfH, view, zoom)
   if not (iw > 0 and ih > 0 and surfW > 0 and surfH > 0) then return nil end
   local vpw, vph = view.vpw or 0, view.vph or 0
   if vpw <= 0 or vph <= 0 then return nil end
@@ -1178,22 +1250,42 @@ local function surfaceFit(iw, ih, surfW, surfH, view)
   -- viewport rather than taken from `view.scale`: under BATTLE SIZE = FILL it
   -- is fractional and the two can disagree.
   local sx, sy = vpw / surfW, vph / surfH
-  -- `drawCover`'s own placement on the surface, in surface pixels.
-  local cover = math.max(surfW / iw, surfH / ih)
+  -- `drawCover`'s own placement on the surface, in surface pixels -- the same
+  -- expression, including the zoom, or the two halves part company.
+  local cover = math.max(surfW / iw, surfH / ih) * (zoom or 1)
   local dx = (surfW - iw * cover) * 0.5
   local dy = (surfH - ih * cover) * 0.5
   -- ...carried out to the window.
-  return cover * sx, cover * sy,
-         (view.ox or 0) + dx * sx, (view.oy or 0) + dy * sy
+  local px, py = (view.ox or 0) + dx * sx, (view.oy or 0) + dy * sy
+  local pw, ph = iw * cover * sx, ih * cover * sy
+
+  -- ------- and slid the least it can, when that is what covering costs
+  --
+  -- Centred on the SURFACE is where the picture belongs -- that is the
+  -- registration the art was composed against.  But the surface is not always
+  -- centred in the WINDOW: on a handheld it sits high, with more letterbox
+  -- below it than above.  Centre the zoomed picture on the surface there and
+  -- it reaches the top edge and stops short of the bottom one.
+  --
+  -- Zooming further to cover would work and costs the wrong thing: the zoom is
+  -- what moves the scene out from under the battlers, and it would have to
+  -- grow by half again to close a gap a few pixels of slide closes.  So the
+  -- picture keeps the smallest zoom that CAN cover, and is slid the minimum
+  -- distance that makes it -- never past the point of covering, so it is
+  -- centred on the surface whenever that is possible at all.
+  local ww, wh = view.ww or 0, view.wh or 0
+  if pw >= ww and ww > 0 then px = math.min(0, math.max(px, ww - pw)) end
+  if ph >= wh and wh > 0 then py = math.min(0, math.max(py, wh - ph)) end
+  return cover * sx, cover * sy, px, py
 end
 
-local function coverQuads(img, iw, ih, view, rects, surfW, surfH)
-  local sx, sy, dx, dy = surfaceFit(iw, ih, surfW, surfH, view)
+local function coverQuads(img, iw, ih, view, rects, surfW, surfH, zoom)
+  local sx, sy, dx, dy = surfaceFit(iw, ih, surfW, surfH, view, zoom)
   if not sx then return nil end
   local scale = sx
-  local key = ("%d:%d:%d:%d:%d:%d:%d:%d")
+  local key = ("%d:%d:%d:%d:%d:%d:%d:%d:%.4f")
     :format(view.ww or 0, view.wh or 0, view.ox or 0, view.oy or 0,
-            view.vpw or 0, view.vph or 0, surfW or 0, surfH or 0)
+            view.vpw or 0, view.vph or 0, surfW or 0, surfH or 0, zoom or 1)
   local cached = quadCache[img]
   -- Every value the caller needs, on the cached path too.  Dropping `sy` here
   -- made the FIRST frame right and every frame after it throw -- inside the
@@ -1400,7 +1492,8 @@ local function bleedInto(view)
 
   local iw, ih = img:getDimensions()
   if iw <= 0 or ih <= 0 then return end
-  local cut, sx, _, dy, sy = coverQuads(img, iw, ih, view, rects, bleedW, bleedH)
+  local cut, sx, _, _, sy =
+    coverQuads(img, iw, ih, view, rects, bleedW, bleedH, bleedZoom)
   if not cut then return end
 
   -- The bars the picture cannot reach get the surround's own colour first, so
@@ -1442,6 +1535,10 @@ mod.exports.bleedCover = coverFit
 -- view in, a scale and an origin out -- and separated for the same reason
 -- `bleedRects` is.
 mod.exports.bleedSurfaceFit = surfaceFit
+-- BATTLE SIZE = FILL's overflow factor, and the question it answers: how much
+-- bigger than the surface the picture has to be to reach every edge.
+mod.exports.arenaFillZoom = fillZoom
+mod.exports.arenaFillWanted = fillWanted
 -- Which SIZE of the art a screen wants, and the view it reads that from.
 -- Exposed together because the decision is only as good as what it is given.
 mod.exports.arenaArtLayout = artLayout
@@ -2151,6 +2248,10 @@ local function wrap(original, surfaceW, surfaceH, layout)
     if not img then return original(...) end
 
     pendingImage, pendingW, pendingH = img, surfaceW, surfaceH
+    pendingZoom = fillWanted(battle)
+      and fillZoom(select(1, img:getDimensions()),
+                   select(2, img:getDimensions()),
+                   surfaceW, surfaceH, lastView) or 1
     outerCanvas = love.graphics.getCanvas()
     consumed, active = false, true
     love.graphics.rectangle = rectangleShim
@@ -2162,7 +2263,8 @@ local function wrap(original, surfaceW, surfaceH, layout)
     -- or on a battle no slot answered, the engine's own white field is still
     -- there and the white bars around it are the right colour for it.
     if consumed then
-      bleedImage, bleedW, bleedH = pendingImage, surfaceW, surfaceH
+      bleedImage, bleedW, bleedH, bleedZoom =
+      pendingImage, surfaceW, surfaceH, pendingZoom
     end
     active, pendingImage, outerCanvas = false, nil, nil
 
@@ -2751,6 +2853,10 @@ local function installGen2()
 
     active, consumed = true, true
     pendingImage, pendingW, pendingH = chosen, width, height
+    pendingZoom = fillWanted(self)
+      and fillZoom(select(1, chosen:getDimensions()),
+                   select(2, chosen:getDimensions()),
+                   width, height, lastView) or 1
 
     -- Down FIRST, on the surface the scene composites onto, so an attack's
     -- scanline scroll moves the panel over it instead of moving it.
@@ -2762,7 +2868,7 @@ local function installGen2()
       mod.log:warn("the field was not painted: %s", tostring(paintProblem))
     end
 
-    bleedImage, bleedW, bleedH = chosen, width, height
+    bleedImage, bleedW, bleedH, bleedZoom = chosen, width, height, pendingZoom
     -- What UI THEME needs to know about this frame, on the instance rather
     -- than through an export, because it is a fact about ONE battle screen
     -- on ONE frame: is the field a picture, or is it the four numbers the
