@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.30.0
+
+- **Reverted 0.29.0's bottom band.** It filled everything below the picture
+  with the backdrop's own bottom row, on the reasoning that the row is a flat
+  field colour so extending it is seamless. On a phone it is a flat slab of
+  yellow-green across the bottom quarter of the display, next to a white
+  surround — which is worse than the plain surround it replaced, and worse
+  than what it was trying to fix.
+
+  The band above and below the picture is the surround's colour again. The art
+  is 144 rows; reaching the top and bottom edges of a modern display needs
+  rows that exist, not a colour invented from the ones that do.
+
 ## 0.29.0
 
 - **The ground runs on to the bottom of the display.** "It just doesn't go to

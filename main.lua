@@ -1187,21 +1187,6 @@ local function surfaceFit(iw, ih, surfW, surfH, view)
          (view.ox or 0) + dx * sx, (view.oy or 0) + dy * sy
 end
 
--- The picture's last row, one pixel tall, cached per image.  Scaled to a whole
--- band it paints that row's colour -- which on every backdrop in the pack is a
--- single colour -- so this is the ground continuing, not a stretch of detail.
-local rowCache = setmetatable({}, { __mode = "k" })
-
-local function bottomRowQuad(img, iw, ih)
-  if not (iw > 0 and ih > 0) then return nil end
-  local hit = rowCache[img]
-  if hit then return hit end
-  local ok, quad = pcall(love.graphics.newQuad, 0, ih - 1, iw, 1, iw, ih)
-  if not ok then return nil end
-  rowCache[img] = quad
-  return quad
-end
-
 local function coverQuads(img, iw, ih, view, rects, surfW, surfH)
   local sx, sy, dx, dy = surfaceFit(iw, ih, surfW, surfH, view)
   if not sx then return nil end
@@ -1439,32 +1424,6 @@ local function bleedInto(view)
       if quad and at then g.draw(img, quad, at.x, at.y, 0, sx, sy) end
     end
 
-    -- ------- and the ground runs on to the bottom of the display
-    --
-    -- "It just doesn't go to the full top or bottom of my display."  Below the
-    -- picture there is no more picture: the art is 144 rows and that is all
-    -- there is, so the band under it was the surround's colour.
-    --
-    -- Except that these backdrops are authored with a FLAT bottom row -- all
-    -- 58 of them, every pixel of row 143 the same colour -- because that is
-    -- the field the cart's text box sits on.  So the ground can simply run on:
-    -- the bottom row stretched down is the same colour it already is, which is
-    -- an extension of the picture rather than a smear of it, and the seam
-    -- cannot show because there is nothing in the row to smear.
-    --
-    -- Only downwards, and only from that row.  The TOP row is sky or ceiling
-    -- on every one of the 58 (the most common colour covers a median of 43%
-    -- of it), so pulling that up WOULD be the stretching this release exists
-    -- to stop -- the band above the picture keeps the surround's colour, and
-    -- the honest fix for it is taller art.
-    local skirtY = dy + ih * sy
-    if skirtY < (view.wh or 0) - 0.5 and ih > 0 then
-      local row = bottomRowQuad(img, iw, ih)
-      if row then
-        g.draw(img, row, 0, skirtY, 0,
-               (view.ww or 0), (view.wh or 0) - skirtY)
-      end
-    end
   end)
 end
 

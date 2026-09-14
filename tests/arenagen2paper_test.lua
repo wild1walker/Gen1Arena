@@ -995,31 +995,13 @@ do
     if fills[i].kind == "rect" then painted[#painted + 1] = fills[i] end
   end
   eq(#painted, 8, "all eight bars are answered for")
-  eq(#draws, drawsBefore + 1,
-     "and the only thing drawn into them is the ground running on: no piece "
-     .. "of the picture is blown up to reach, because a backdrop that ends at "
-     .. "the surface has nothing outside itself to show")
+  eq(#draws, drawsBefore,
+     "and nothing is drawn into them: a backdrop that ends at the surface has "
+     .. "nothing outside itself to show, and inventing something to fill them "
+     .. "with is what 0.29.0 got wrong -- a flat slab of field colour across "
+     .. "the bottom quarter of a phone screen")
 end
 
-do
-  io.write("the ground runs on to the bottom of the display\n")
-  -- Below the picture there is no more picture -- the art is 144 rows.  But
-  -- every backdrop in the pack has a FLAT bottom row, because that is the
-  -- field the cart's text box sits on, so that row stretched down is the same
-  -- colour it already is: the ground continuing rather than a smear of it.
-  -- Upwards there is no such row (sky and ceilings, all of them), which is
-  -- why nothing is pulled up.
-  local self = screen({ drawsPics = false })
-  frame(self)
-  local drawsBefore = #draws
-  bars(VIEW)
-  local skirt = draws[#draws]
-  ok(skirt and #draws == drawsBefore + 1, "one band, once")
-  eq(skirt and skirt.b, 0,
-     "spanning the window from its left edge, not just the bars")
-  ok(skirt and skirt.c and skirt.c > VIEW.oy,
-     "starting at the foot of the picture and not above it")
-end
 
 do
   io.write("a battle the backdrop did not take keeps the cart's surround\n")
