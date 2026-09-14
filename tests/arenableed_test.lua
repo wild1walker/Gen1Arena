@@ -39,6 +39,12 @@ local function eq(actual, expected, description)
   ok(same, description)
 end
 
+local function slurp(path)
+  local handle = assert(io.open(path, "r"), path .. " is missing")
+  local body = handle:read("*a")
+  handle:close()
+  return body
+end
 local function load_(path, ...)
   local handle = assert(io.open(path, "r"), path .. " is missing")
   local source = handle:read("*a")
@@ -419,9 +425,7 @@ do
   -- coverQuads needs a live Image to drive.  What can go wrong here is the
   -- clamp being dropped, or being written against `ih` again, and both of
   -- those are visible in the text.
-  local handle = assert(io.open("main.lua", "r"))
-  local text = handle:read("*a")
-  handle:close()
+  local text = slurp("main.lua")
   ok(text:find("local floorV = pictureBottom(img) or ih", 1, true) ~= nil,
      "the bars take the picture's floor, and the whole picture when it has "
      .. "no band")
