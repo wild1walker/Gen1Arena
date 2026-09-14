@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.27.0
+
+- **EDGE TO EDGE off left the backdrop standing in a white frame.** Reported
+  with two screenshots side by side, every other mod disabled, on a PC window
+  and on a handheld both.
+
+  The white was never this mod's paint. `Renderer:endFrame` fills the void
+  around the screen with the paper shade for any state that sets
+  `letterboxWhite`, and a battle sets it *because its field is white paper* —
+  so the paper reads as running off the edges of the screen instead of
+  stopping at a rectangle. Put a photograph in the field and the paper is
+  gone: the surround is then the only white left, and a white rectangle
+  around a picture is a frame, not an edge.
+
+  So turning the toggle off no longer means "leave the bars alone". The
+  picture stops at the surface and the bars go where the engine puts them for
+  a screen that never asked for paper — flat black, the same thing BATTLE BG
+  = BLACK and FAITHFUL RATIO's mobile lock already give. EDGE TO EDGE is back
+  to meaning the one thing it says: whether the picture reaches the edges.
+
+  Through UI LETTERBOX rather than over it. The bar colour is composed with
+  `Letterbox.fill` handed BLACK as the authored colour instead of the paper
+  shade, so AUTO — the mode that was deducing white from `letterboxWhite` —
+  comes back black, while BLACK, WHITE and PALETTE still come back as
+  whatever the player asked for. Only the deduction changes.
+
+  A battle the backdrop did not take is untouched: white paper running off
+  the edge of the screen is right when the field really is white paper, and
+  blacking that out would be this mod changing a battle it never entered.
+
 ## 0.26.0
 
 - **A full-colour trainer is cut out of its square too.** Reported as "some

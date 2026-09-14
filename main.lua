@@ -1210,6 +1210,51 @@ local function bleedRects(view)
   return out
 end
 
+-- ------- what the bars are when the picture does NOT go into them
+--
+-- EDGE TO EDGE off never meant "leave the bars alone", and leaving them alone
+-- is what the report is: a backdrop standing in a bright white frame, on a PC
+-- window and on a handheld alike, with every other mod disabled.
+--
+-- The white is the engine answering a question this mod has changed the answer
+-- to.  `Renderer:endFrame` fills the void with the paper shade for any state
+-- that sets `letterboxWhite`, and a battle sets it BECAUSE ITS FIELD IS WHITE
+-- PAPER -- so the paper reads as running off the edges of the screen rather
+-- than stopping at a rectangle.  Put a photograph in the field and the paper
+-- is gone.  The surround is then the only white left on the screen, and a
+-- white rectangle around a picture is a frame, not an edge.
+--
+-- So with the picture stopping at the surface the bars go where the engine
+-- puts them for a screen that never asked for paper: flat black, the same
+-- thing BATTLE BG = BLACK and FAITHFUL RATIO's mobile lock already give.
+--
+-- Through the player's UI LETTERBOX rather than over it.  `Letterbox.fill` is
+-- handed BLACK as the authored colour instead of the paper shade, so AUTO --
+-- the mode that was deducing white from `letterboxWhite` -- comes back black,
+-- and BLACK, WHITE and PALETTE still come back as whatever the player asked
+-- for.  Only the deduction changes, which is the only part that was wrong.
+local function barColor()
+  local ok, Letterbox = pcall(require, "src.render.Letterbox")
+  if not ok or type(Letterbox) ~= "table"
+     or type(Letterbox.fill) ~= "function" then
+    return 0, 0, 0
+  end
+  -- The same two lines `Renderer:endFrame` uses to read the paper, including
+  -- where it gets the data from: the palette is per-generation and per-pack,
+  -- and PALETTE mode is a promise about THIS game's ramp.
+  local got, r, g, b = pcall(Letterbox.fill, 0, 0, 0, function()
+    local okFx, PaletteFX = pcall(require, "src.render.PaletteFX")
+    if not okFx or type(PaletteFX) ~= "table"
+       or type(PaletteFX.paperShade) ~= "function" then
+      return nil
+    end
+    local okGame, Game = pcall(require, "src.core.Game")
+    return PaletteFX.paperShade(okGame and Game and Game.data or nil)
+  end)
+  if not got or type(r) ~= "number" then return 0, 0, 0 end
+  return r, g, b
+end
+
 local function bleedInto(view)
   local img = bleedImage
   -- Claimed, not read: the hook runs once per frame after the battle drew,
@@ -1218,7 +1263,6 @@ local function bleedInto(view)
   -- frame counter.
   bleedImage = nil
   if not img then return end
-  if mod.options:get("bleed") == false then return end
   -- Nothing painted the field this frame, so there is no edge to stretch.
   -- The bars belong to whatever took the world.
   if worldTaken() then return end
@@ -1228,11 +1272,30 @@ local function bleedInto(view)
   -- FAITHFUL RATIO's mobile lock promises the display outside the GB screen
   -- stays black (src/core/FaithfulRes.lua), and the renderer honours that
   -- ahead of the paper surround.  A backdrop in the bars would break the same
-  -- promise, so it stands down for the same reason the paper does.
+  -- promise, so it stands down for the same reason the paper does -- and the
+  -- bars are already black, so there is nothing for the branch below to do
+  -- either.
   if faithfulLocked() then return end
 
   local rects = bleedRects(view)
   if not rects or not rects[1] then return end
+
+  if mod.options:get("bleed") == false then
+    local r, g, b = barColor()
+    -- Inside the guard like every other full-colour paint in this file: the
+    -- palette shader answers a pixel by its RED channel, so a flat black fill
+    -- through it comes back as the page's shade 3 -- which under a reversed
+    -- DARK ramp is WHITE.  The one colour this is trying not to paint.
+    withoutShader(function()
+      local g2 = love.graphics
+      g2.setColor(r, g, b, 1)
+      for _, rect in ipairs(rects) do
+        realRectangle("fill", rect.x, rect.y, rect.w, rect.h)
+      end
+      g2.setColor(1, 1, 1, 1)
+    end)
+    return
+  end
 
   local iw, ih = img:getDimensions()
   if iw <= 0 or ih <= 0 then return end
@@ -2679,10 +2742,15 @@ local optionRows = {
   -- of the draw and the crash it caused is gone with it.
   { key = "pic_cutout", type = "toggle", label = "PIC CUTOUT", default = true },
   -- The bars around the battle.  On, the backdrop's own edge is stretched
-  -- into them so the picture runs off the screen; off, they are the paper
-  -- white the engine gives a battle, which with a backdrop up reads as a
-  -- bright frame around the art -- and in a WIDE battle as a big white bar
-  -- above and below it.  See bleedInto.
+  -- into them so the picture runs off the screen; off, the picture stops at
+  -- the surface and the bars go black -- the engine's own default, and what
+  -- UI LETTERBOX says instead when the player has set it.
+  --
+  -- What OFF used to do was leave them as the paper white the engine gives a
+  -- battle, which with a backdrop up is a bright frame around the art and in
+  -- a WIDE battle a big white bar above and below it.  That was reported as
+  -- the toggle being broken, and it was right: nobody turns this off to ask
+  -- for a white frame.  See bleedInto.
   { key = "bleed", type = "toggle", label = "EDGE TO EDGE", default = true },
 }
 

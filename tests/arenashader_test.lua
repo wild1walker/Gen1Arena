@@ -150,6 +150,19 @@ do
   ok(bleed and bleed:find("withoutShader", 1, true) ~= nil,
     "and it is inside the guard too -- bars in four greys beside a field in "
     .. "colour would be worse than either")
+
+  -- And the OTHER thing that goes in those bars: the flat fill that replaces
+  -- the engine's white surround when EDGE TO EDGE is off.  This one is not a
+  -- photograph, and it still cannot go through the shader -- worse, it is the
+  -- case where the shader does the most damage.  The palette answers a pixel
+  -- by its RED channel, so a black fill lands on the page's shade 3, and
+  -- under a reversed DARK ramp shade 3 is WHITE: the one colour the fill
+  -- exists to get rid of, painted by the fix for it.
+  local off = src:match('\n(  if mod%.options:get%("bleed"%) == false then\n.-\n    return\n  end\n)')
+  ok(off ~= nil, "the bars' own colour, for the frames the picture stays home")
+  ok(off and off:find("withoutShader", 1, true) ~= nil,
+    "inside the guard as well -- a black fill read through a reversed ramp "
+    .. "comes back white, which is the bug it is fixing")
 end
 
 io.write(("\narenashader: %d passed, %d failed\n"):format(passed, failed))

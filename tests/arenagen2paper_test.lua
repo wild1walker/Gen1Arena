@@ -93,12 +93,18 @@ local function newImageData(w, h)
 end
 love.image = { newImageData = newImageData }
 
+-- The colour a fill was painted in, which is the whole assertion for the
+-- letterbox bars: black or white is the difference between an edge and a
+-- frame, and both are a `rectangle("fill", ...)` otherwise identical.
+local pen = { 1, 1, 1, 1 }
+
 love.graphics = {
   rectangle = function(mode, x, y, w, h)
-    fills[#fills + 1] = { kind = "rect", x = x, y = y, w = w, h = h }
+    fills[#fills + 1] = { kind = "rect", x = x, y = y, w = w, h = h,
+                          color = { pen[1], pen[2], pen[3] } }
   end,
-  setColor = function() end,
-  getColor = function() return 1, 1, 1, 1 end,
+  setColor = function(r, g, b, a) pen = { r or 0, g or 0, b or 0, a or 1 } end,
+  getColor = function() return pen[1], pen[2], pen[3], pen[4] end,
   push = function() end,
   pop = function() end,
   origin = function() end,
@@ -242,6 +248,31 @@ BattleState.drawPic = function(self, mon, back)
   -- the plain blit `drawPic` ends in: image, x, y, rotation, scale, scale
   love.graphics.draw(IMAGE, 40, 48, 0, 2, 2)
 end
+-- UI LETTERBOX and the paper reader, the two the bar colour is composed from.
+-- Real shapes: `Letterbox.fill(r, g, b, paper)` returns the caller's own
+-- colour on AUTO and overrides it on the other three, and `paperShade` is the
+-- live ramp's paper.
+local Letterbox
+Letterbox = {
+  mode = "auto",
+  fill = function(r, g, b, paper)
+    if Letterbox.mode == "black" then return 0, 0, 0 end
+    if Letterbox.mode == "white" then return 1, 1, 1 end
+    if Letterbox.mode == "palette" and paper then
+      local pr, pg, pb = paper()
+      if pr then return pr, pg, pb end
+    end
+    return r, g, b
+  end,
+}
+package.loaded["src.render.Letterbox"] = Letterbox
+package.loaded["src.render.PaletteFX"] = {
+  paperShade = function() return 0.9, 0.9, 0.8 end,
+  markTrueColor = function() end,
+  setMarkOffset = function() end,
+}
+package.loaded["src.core.Game"] = { data = {} }
+
 package.loaded["src.battle.BattleState"] = BattleState
 package.loaded["src.battle.WideBattle"] = nil
 
@@ -856,6 +887,120 @@ do
     ok(text:find("G.draw(image, self:cropQuad(image, visible)", 1, true) ~= nil,
        "and so is the faint slide's crop")
   end
+end
+
+-- ------------------------------------------------- the bars, with the
+-- picture stopping at the surface
+--
+-- Reported with two screenshots side by side: EDGE TO EDGE on, and EDGE TO
+-- EDGE off with the backdrop standing in a bright white frame.  Every other
+-- mod disabled, on a PC window and on a handheld both.
+--
+-- The white is not this mod's paint, it is the engine's, and it is the engine
+-- answering a question this mod has changed the answer to: `Renderer:endFrame`
+-- fills the void with the paper shade for any state that sets
+-- `letterboxWhite`, and a battle sets it because its field IS white paper.
+-- Replace the field with a photograph and the paper is gone; the surround is
+-- then the only white left and reads as a frame rather than as an edge.
+--
+-- These drive the real `render.letterbox` hook, after a real frame, because
+-- what was wrong is a BRANCH and not arithmetic: the toggle used to return
+-- before anything was painted at all.
+
+local function bars(view)
+  local hook = mod.hooked["render.letterbox"]
+  local called = false
+  hook(function() called = true end, view)
+  return called
+end
+
+-- 160x144 doubled and centred in a 400x400 window: bars on all four sides.
+local VIEW = { ww = 400, wh = 400, ox = 40, oy = 56, vpw = 320, vph = 288 }
+
+local function isBlack(f)
+  return f.color and f.color[1] == 0 and f.color[2] == 0 and f.color[3] == 0
+end
+
+do
+  io.write("EDGE TO EDGE off still answers for the bars\n")
+  Letterbox.mode = "auto"
+  mod.stored.bleed = false
+  local self = screen({ drawsPics = false })
+  frame(self)
+  ok(tookTheField(self), "the arm took the field")
+  local before = #fills
+  ok(bars(VIEW), "the hook passes the frame along either way")
+
+  local painted = {}
+  for i = before + 1, #fills do
+    if fills[i].kind == "rect" then painted[#painted + 1] = fills[i] end
+  end
+  eq(#painted, 8,
+     "all eight bars are painted -- four sides and the four corners the "
+     .. "sides do not reach")
+
+  local white = 0
+  for _, f in ipairs(painted) do if not isBlack(f) then white = white + 1 end end
+  eq(white, 0,
+     "and every one of them BLACK: the engine's own default for a screen "
+     .. "that never asked for paper, which is what this one is now")
+  mod.stored.bleed = nil
+end
+
+do
+  io.write("...but never over what the player asked for\n")
+  mod.stored.bleed = false
+
+  Letterbox.mode = "white"
+  local self = screen({ drawsPics = false })
+  frame(self)
+  local before = #kinds("rect")
+  bars(VIEW)
+  local last = fills[#fills]
+  ok(last and last.kind == "rect" and not isBlack(last),
+     "UI LETTERBOX = WHITE keeps its white: the deduction from "
+     .. "letterboxWhite is what was wrong, not a setting with a row on it")
+  ok(#kinds("rect") > before, "and the bars are still painted")
+
+  Letterbox.mode = "palette"
+  self = screen({ drawsPics = false })
+  frame(self)
+  bars(VIEW)
+  last = fills[#fills]
+  ok(last and last.color and last.color[1] == 0.9,
+     "and PALETTE still takes the ramp's own paper")
+
+  Letterbox.mode = "auto"
+  mod.stored.bleed = nil
+end
+
+do
+  io.write("EDGE TO EDGE on is still the picture\n")
+  local self = screen({ drawsPics = false })
+  frame(self)
+  local rectsBefore = #kinds("rect")
+  local drawsBefore = #draws
+  bars(VIEW)
+  eq(#kinds("rect"), rectsBefore,
+     "no flat fill: the bars are the backdrop's own edge, as they were")
+  ok(#draws > drawsBefore, "which is drawn, eight pieces of one picture")
+end
+
+do
+  io.write("a battle the backdrop did not take keeps the cart's surround\n")
+  mod.stored.enabled = false
+  mod.stored.bleed = false
+  local self = screen()
+  frame(self)
+  eq(tookTheField(self), false, "the field is the cart's own white")
+  local before = #kinds("rect")
+  bars(VIEW)
+  eq(#kinds("rect"), before,
+     "so the bars are left alone: white paper running off the edge of the "
+     .. "screen is RIGHT when the field really is white paper, and blacking "
+     .. "it out would be this mod changing a battle it never touched")
+  mod.stored.enabled = nil
+  mod.stored.bleed = nil
 end
 
 io.write(("arena gen2 paper: %d passed, %d failed\n"):format(passed, failed))
