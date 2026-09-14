@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.32.0
+
+- **Reverted 0.31.0's FILL zoom.** It made the backdrop reach every edge of the
+  window, and the arithmetic for that is right in isolation — but on a real
+  handheld it lands beside a battle surface the engine has scaled by a
+  different rule, so the screen ends up carrying the scene at two
+  magnifications with the surface's edge as the join. A picture-in-picture,
+  which is worse than the bars it removed.
+
+  The cause is that under FILL the letterbox viewport the mod is handed does
+  not describe the scale the surface was actually drawn at, so the two halves
+  cannot be made to agree from here on the numbers available. Out until that
+  is settled against a real frame rather than reasoned about.
+
 ## 0.31.0
 
 - **BATTLE SIZE = FILL fills the screen.** FILL means "no bars", and the
