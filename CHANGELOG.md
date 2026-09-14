@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.29.0
+
+- **The ground runs on to the bottom of the display.** "It just doesn't go to
+  the full top or bottom of my display." Below the picture there is no more
+  picture — the art is 144 rows and that is all there is — so 0.28.0 left the
+  band under it as the surround's colour.
+
+  It doesn't have to be. Every one of the 58 wide backdrops has a **perfectly
+  flat bottom row**, because that is the field the cart's text box sits on. So
+  that row carries on downwards: it is the same colour it already is, which
+  makes it an extension of the picture rather than a smear of it, and no seam
+  can show because there is nothing in the row to smear.
+
+  Only downwards, and only from that row. The top row is sky or ceiling on
+  every one of the 58 — the commonest colour covers a median of 43% of it — so
+  pulling *that* up would be exactly the stretching 0.28.0 removed. The band
+  above the picture keeps the surround's colour, and the honest fix for it is
+  art with more sky in it.
+
+### Fixed
+
+- **A backdrop that vanished after the first frame.** 0.28.0's letterbox
+  placement returned one more value than its own cache did, so the first frame
+  of a battle was right and every frame after it threw — inside the hook's
+  `pcall`, which turned it into a log line and a battle with no bars at all.
+  Caught by a test written for the band above, which is the only reason it is
+  in this release and not in a report.
+
 ## 0.28.0
 
 - **One photograph, at one scale.** Reported with a Crystal battle at BATTLE
