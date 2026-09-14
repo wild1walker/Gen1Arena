@@ -1001,6 +1001,9 @@ local pendingImage = nil      -- backdrop chosen for this frame
 -- ...and the one to carry into the bars around it, claimed by the letterbox
 -- pass at the end of the same frame.  See the note over bleedInto.
 local bleedImage, bleedW, bleedH = nil, OG_W, OG_H
+-- ...and WHERE the engine put that surface on screen this frame.  See
+-- `panelRect` for why the letterbox payload cannot be asked.
+local bleedPanel = nil
 local pendingW, pendingH = OG_W, OG_H
 local outerCanvas = nil       -- the canvas bound when the battle draw began
 local consumed = false        -- the field fill has already been replaced
@@ -1333,14 +1336,80 @@ end
 -- town roofs, which already fall through to the plain scene when their folder
 -- is absent (see GEN2_VARIANT_DIR).
 --
+-- ------- WHERE THE BATTLE SURFACE ACTUALLY IS
+--
+-- The bars are the window minus the battle surface, so everything in this
+-- file stands on one rectangle: where the engine drew the surface, and at
+-- what scale.  `render.letterbox` hands one over, and on Gen 2 IT IS NOT
+-- THAT RECTANGLE.
+--
+-- src/core/Game2.lua:1424 builds the payload as
+--
+--     local scale, ox, oy = self:frameFit(w, h)      -- Chrome.fitScale
+--     vpw = 160 * scale, vph = 144 * scale
+--
+-- -- the CLASSIC 160x144 panel at the CLASSIC integer scale, with no
+-- reference to the battle, its layout or its BATTLE SIZE.  The battle is
+-- drawn somewhere else entirely: src/ui/gen2/WideBattle.lua:50 places a
+-- 304x144 surface at `battle:battlePanelScale(w, h)` and
+-- `Chrome.fitOriginFor(w, h, scale, 38, 18)`, and that scale is FRACTIONAL
+-- under FILL.
+--
+-- On a 1600x900 window with BATTLE LAYOUT = WIDE and BATTLE SIZE = FIXED the
+-- two are:
+--
+--     the battle      40,90   1520x720   (scale 5)
+--     the payload    320,18    960x864   (scale 6)
+--
+-- so the "bars" computed from the payload run from x 0 to 320 -- 280 pixels
+-- of which are ON the battle -- while the 90 rows of real surround above the
+-- battle are left to whatever painted them.  Which is exactly the report:
+-- *"a giant white box around the top"*, and *"the background filled, but then
+-- a square pasted on top of a zoomed in background and zoomed in ui"*.
+-- tools/arenaview renders both, side by side, from these same numbers.
+--
+-- The one case where the payload is right is CLASSIC + FIXED, which is why
+-- this went unnoticed: that is the shape the payload describes.
+--
+-- So the rectangle is asked of the engine directly, through the two calls
+-- WideBattle.draw itself uses, at the moment the battle draws -- which is
+-- also the only moment the live BattleState is in hand to ask.  Anything
+-- missing and this returns nil and the payload is used, which is still right
+-- on Gen 1 (src/render/Renderer.lua:822 builds vpw/vph from `uiSize`, the
+-- real surface) and on Gen 2's classic fixed battle.
+local function panelRect(state, surfW, surfH)
+  if not gen2() then return nil end
+  if type(state) ~= "table" then return nil end
+  if type(state.battlePanelScale) ~= "function" then return nil end
+  local okC, Chrome = pcall(require, "src.ui.gen2.Chrome")
+  if not okC or type(Chrome) ~= "table"
+     or type(Chrome.fitOriginFor) ~= "function" then
+    return nil
+  end
+  local ww, wh = love.graphics.getDimensions()
+  if not (ww and wh and ww > 0 and wh > 0) then return nil end
+  local okS, scale = pcall(state.battlePanelScale, state, ww, wh)
+  if not okS or type(scale) ~= "number" or scale <= 0 then return nil end
+  local okO, ox, oy = pcall(Chrome.fitOriginFor, ww, wh, scale,
+                            surfW / 8, surfH / 8)
+  if not okO or type(ox) ~= "number" or type(oy) ~= "number" then return nil end
+  return { ox = ox, oy = oy, vpw = surfW * scale, vph = surfH * scale,
+           ww = ww, wh = wh, scale = scale }
+end
+
 -- Read off the LAST frame's letterbox rather than measured here, because this
 -- runs inside the battle's draw and the view is the renderer's answer at
 -- composite time.  One frame of lag on a window resize, which is a frame
 -- nobody sees.
 local lastView = nil
+-- The last frame's `panelRect`, which is the same question asked of the
+-- engine rather than of the payload.  Preferred when there is one: on a wide
+-- Gen 2 battle the payload's 160-wide rect says there are side bars on a
+-- window where the 304-wide panel leaves none.
+local lastPanel = nil
 
 local function wantsWideArt()
-  local view = lastView
+  local view = lastPanel or lastView
   if type(view) ~= "table" then return false end
   local ww, vpw = view.ww or 0, view.vpw or 0
   if ww <= 0 or vpw <= 0 then return false end
@@ -1358,12 +1427,25 @@ end
 
 local function bleedInto(view)
   local img = bleedImage
+  local panel = bleedPanel
   -- Claimed, not read: the hook runs once per frame after the battle drew,
   -- and a frame with no battle draw in it must not inherit the last one's
   -- picture.  Clearing on the way past is what makes that true without a
   -- frame counter.
-  bleedImage = nil
+  bleedImage, bleedPanel = nil, nil
   if not img then return end
+  -- The rectangle this whole file is about.  `panelRect` asked the engine
+  -- where the battle really went; the payload only knows where a classic
+  -- panel would have gone.  Everything else in the payload -- the window,
+  -- the dpi, worldActive -- is still the frame's own.
+  if panel and type(view) == "table" then
+    view = {
+      ww = view.ww, wh = view.wh, pw = view.pw, ph = view.ph,
+      ox = panel.ox, oy = panel.oy, vpw = panel.vpw, vph = panel.vph,
+      scale = panel.scale, dpiX = view.dpiX, dpiY = view.dpiY,
+      worldActive = view.worldActive,
+    }
+  end
   -- Nothing painted the field this frame, so there is no edge to stretch.
   -- The bars belong to whatever took the world.
   if worldTaken() then return end
@@ -1445,6 +1527,11 @@ mod.exports.bleedSurfaceFit = surfaceFit
 -- Which SIZE of the art a screen wants, and the view it reads that from.
 -- Exposed together because the decision is only as good as what it is given.
 mod.exports.arenaArtLayout = artLayout
+-- Published for tests/arenagen2paper_test.lua: the rectangle the bars are the
+-- complement of.  It is the one number in this file that cannot be read off
+-- the hook's payload, and the one that was wrong on every Gen 2 battle that
+-- was not CLASSIC + FIXED.
+mod.exports.arenaPanelRect = panelRect
 mod.exports.arenaSeeView = function(view) lastView = view end
 
 -- The Gen 2 selection, for tests.  All of it is pure -- a map header and a
@@ -2763,6 +2850,11 @@ local function installGen2()
     end
 
     bleedImage, bleedW, bleedH = chosen, width, height
+    -- Where the engine is about to put that surface, asked of the engine
+    -- while the live battle is in hand.  See `panelRect`: the letterbox
+    -- payload describes a classic panel and this one does not.
+    bleedPanel = panelRect(self, width, height)
+    lastPanel = bleedPanel
     -- What UI THEME needs to know about this frame, on the instance rather
     -- than through an export, because it is a fact about ONE battle screen
     -- on ONE frame: is the field a picture, or is it the four numbers the

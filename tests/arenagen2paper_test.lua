@@ -1020,5 +1020,118 @@ do
   mod.stored.bleed = nil
 end
 
+-- ------------------------------------------- the rectangle the bars are the
+-- complement OF
+--
+-- Everything above assumes the payload `render.letterbox` hands over names
+-- the rectangle the battle was drawn in.  On Gen 2 it does not.
+--
+-- src/core/Game2.lua:1424 builds it as `Chrome.fitScale(w, h)` and
+-- `160 * scale` by `144 * scale` -- the CLASSIC panel at the CLASSIC integer
+-- scale, with no reference to the battle, its layout or its BATTLE SIZE.  A
+-- wide battle is a 304x144 surface at `battle:battlePanelScale(w, h)` placed
+-- by `Chrome.fitOriginFor(w, h, scale, 38, 18)` (src/ui/gen2/WideBattle.lua:50),
+-- which on a 1600x900 window is 40,90 1520x720 against the payload's
+-- 320,18 960x864.
+--
+-- Bars built from the payload therefore paint 280 columns of BLACK ONTO THE
+-- BATTLE down each side, and leave the 90 rows of real surround above and
+-- below it to whatever the engine painted -- which is the report, twice
+-- over: *"a giant white box around the top"*, and *"the background filled,
+-- but then a square pasted on top of a zoomed in background and zoomed in
+-- ui, very broken"*.
+--
+-- So the rect is asked of the engine, through the engine's own two calls, at
+-- the moment the battle draws.  These are the numbers, and then the bars that
+-- come out of them.
+local WIN_W, WIN_H = 1600, 900
+
+love.graphics.getDimensions = function() return WIN_W, WIN_H end
+-- src/ui/gen2/Chrome.lua:91, with no touch-skin cutout and no position lift.
+Chrome.fitOriginFor = function(w, h, scale, tilesW, tilesH)
+  return math.floor((w - tilesW * 8 * scale) / 2),
+         math.floor((h - tilesH * 8 * scale) / 2)
+end
+-- src/ui/gen2/BattleState.lua:306 for a wide FIXED battle: the integer fit of
+-- the 38x18 tile surface.
+BattleState.battlePanelScale = function(_, w, h)
+  return math.max(1, math.floor(math.min(w / 304, h / 144)))
+end
+
+do
+  io.write("the panel rect is the engine's, not the payload's\n")
+  local rect = mod.exports.arenaPanelRect(
+    { battlePanelScale = BattleState.battlePanelScale }, 304, 144)
+  ok(rect ~= nil, "a live battle answers where its surface went")
+  if rect then
+    eq(rect.scale, 5, "a 304x144 surface fits a 1600x900 window five times")
+    eq(rect.ox, 40, "centred horizontally")
+    eq(rect.oy, 90, "and vertically")
+    eq(rect.vpw, 1520, "1520 wide")
+    eq(rect.vph, 720, "and 720 tall -- none of which is the payload's "
+       .. "320,18 960x864")
+  end
+  -- A state the engine never gave the method to (Gen 1, or a Gold build
+  -- older than battlePanelScale) falls back rather than guessing.
+  eq(mod.exports.arenaPanelRect({}, 304, 144), nil,
+     "and a state that cannot answer gets no rect at all, so the payload "
+     .. "is used -- which is still right on Gen 1 and on a classic fixed "
+     .. "Gold battle")
+end
+
+do
+  io.write("...and the bars are drawn around THAT\n")
+  local wasWide = BattleState.wideLayout
+  BattleState.wideLayout = function() return true end
+  mod.stored.bleed = false          -- flat bars, so this is pure geometry
+  local self = screen()
+  frame(self)
+  ok(tookTheField(self), "the wide battle took the field")
+
+  -- The payload, exactly as Game2:letterbox builds it for this window.
+  local before = #fills
+  bars({ ww = WIN_W, wh = WIN_H, ox = 320, oy = 18, vpw = 960, vph = 864,
+         scale = 6, dpiX = 1, dpiY = 1 })
+  local painted = {}
+  for i = before + 1, #fills do
+    if fills[i].kind == "rect" then painted[#painted + 1] = fills[i] end
+  end
+  ok(#painted > 0, "the bars are painted")
+
+  -- Not one of them may touch the battle.
+  local onto = 0
+  for _, r in ipairs(painted) do
+    if r.x < 40 + 1520 and r.x + r.w > 40
+       and r.y < 90 + 720 and r.y + r.h > 90 then
+      onto = onto + 1
+    end
+  end
+  eq(onto, 0, "no bar overlaps the battle panel -- the payload's rect would "
+     .. "have put 280 columns of black down each side of it")
+
+  -- ...and between them they have to cover every pixel that is not the
+  -- battle, or the engine's paper shows through as a frame.
+  local covered = {}
+  for _, r in ipairs(painted) do
+    for y = r.y, r.y + r.h - 1, 30 do
+      for x = r.x, r.x + r.w - 1, 40 do
+        covered[math.floor(y) .. ":" .. math.floor(x)] = true
+      end
+    end
+  end
+  local holes = 0
+  for y = 0, WIN_H - 1, 30 do
+    for x = 0, WIN_W - 1, 40 do
+      local inPanel = x >= 40 and x < 1560 and y >= 90 and y < 810
+      if not inPanel and not covered[y .. ":" .. x] then holes = holes + 1 end
+    end
+  end
+  eq(holes, 0, "and every pixel outside the battle IS a bar, so the white "
+     .. "frame the report opened with has nowhere left to show")
+
+  BattleState.wideLayout = wasWide
+  mod.stored.bleed = nil
+end
+
 io.write(("arena gen2 paper: %d passed, %d failed\n"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)
