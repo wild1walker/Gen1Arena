@@ -1038,6 +1038,41 @@ end
 -- Cover the surface with the backdrop without distorting it: scale to the
 -- larger of the two axis ratios and centre the overflow.  A backdrop authored
 -- at exactly 160x144 or 304x144 lands 1:1 and this is a no-op.
+-- ------- WHERE A BACKDROP SITS ON THE BATTLE SURFACE
+--
+-- One function, because two callers need the same answer and a battle where
+-- they disagree is the picture-in-picture bug: `drawCover` paints the
+-- picture ON the surface and `surfaceFit` carries the same placement out into
+-- the bars, and the moment those two arithmetics drift the screen carries one
+-- photograph at two magnifications with the surface's edge as the join.
+--
+-- Two cases, and which one applies is a fact about the FILE:
+--
+--   The art is SMALLER than the surface, or the same size.  Cover-fit: scale
+--   to the larger of the two axis ratios and centre the overflow, so the
+--   field is covered and nothing is stretched.  Art authored at exactly
+--   160x144 or 304x144 lands 1:1 and this is a no-op.  Every backdrop
+--   shipped so far is this case.
+--
+--   The art is BIGGER than the surface on BOTH axes.  Then it is oversized on
+--   purpose -- authored on a canvas with the battle surface in the middle and
+--   scenery all round it for the letterbox -- and cover-fitting it would
+--   scale it back DOWN to the surface and throw every one of those extra
+--   pixels away.  So it goes down at 1:1 with its centre on the surface's
+--   centre, and the display crops whatever does not fit.  The middle
+--   304x144 (or 160x144) lands exactly where the old art did, which is what
+--   keeps the mon standing where they stand.
+--
+-- The origin is floored so a picture with an odd margin still lands on the
+-- pixel grid rather than half a pixel off it.
+local function placeOn(iw, ih, surfW, surfH)
+  if iw >= surfW and ih >= surfH and not (iw == surfW and ih == surfH) then
+    return 1, math.floor((surfW - iw) / 2), math.floor((surfH - ih) / 2)
+  end
+  local scale = math.max(surfW / iw, surfH / ih)
+  return scale, (surfW - iw * scale) * 0.5, (surfH - ih * scale) * 0.5
+end
+
 local function drawCover(img, w, h)
   local iw, ih = img:getDimensions()
   if iw == w and ih == h then
@@ -1045,9 +1080,7 @@ local function drawCover(img, w, h)
     love.graphics.draw(img, 0, 0)
     return
   end
-  local scale = math.max(w / iw, h / ih)
-  local dx = (w - iw * scale) * 0.5
-  local dy = (h - ih * scale) * 0.5
+  local scale, dx, dy = placeOn(iw, ih, w, h)
   love.graphics.setColor(1, 1, 1, 1)
   love.graphics.draw(img, dx, dy, 0, scale, scale)
 end
@@ -1239,10 +1272,9 @@ local function surfaceFit(iw, ih, surfW, surfH, view)
   -- viewport rather than taken from `view.scale`: under BATTLE SIZE = FILL it
   -- is fractional and the two can disagree.
   local sx, sy = vpw / surfW, vph / surfH
-  -- `drawCover`'s own placement on the surface, in surface pixels.
-  local cover = math.max(surfW / iw, surfH / ih)
-  local dx = (surfW - iw * cover) * 0.5
-  local dy = (surfH - ih * cover) * 0.5
+  -- `drawCover`'s own placement on the surface, in surface pixels -- the same
+  -- call it makes, not a copy of its arithmetic.  See placeOn.
+  local cover, dx, dy = placeOn(iw, ih, surfW, surfH)
   -- ...carried out to the window.
   return cover * sx, cover * sy,
          (view.ox or 0) + dx * sx, (view.oy or 0) + dy * sy
@@ -1586,6 +1618,10 @@ mod.exports.bleedCover = coverFit
 -- view in, a scale and an origin out -- and separated for the same reason
 -- `bleedRects` is.
 mod.exports.bleedSurfaceFit = surfaceFit
+-- Published for tests/arenableed_test.lua: which of the two placements a file
+-- gets, and where it lands.  The field and the bars both go through this, so
+-- it is the one place they can be proved to agree.
+mod.exports.bleedPlaceOn = placeOn
 -- Which SIZE of the art a screen wants, and the view it reads that from.
 -- Exposed together because the decision is only as good as what it is given.
 mod.exports.arenaArtLayout = artLayout

@@ -437,5 +437,82 @@ do
      .. "would be used for every backdrop after it")
 end
 
+-- ---------------------------------------- art bigger than the battle surface
+--
+-- The backdrops shipped so far are authored at exactly the surface's size, so
+-- `drawCover` lands them 1:1 and there is nothing outside them: the bars get
+-- the wide art on the classic surface and black everywhere else.
+--
+-- Art authored on a BIGGER canvas -- the battle surface in the middle and
+-- scenery all round it -- is the way out of that, and it needs the opposite
+-- rule.  Cover-fitting a 608x288 file onto a 304x144 surface scales it back
+-- DOWN to 304x144 (cover = max(304/608, 144/288) = 0.5) and throws every
+-- extra pixel away, which is the trap in `drawCover`'s arithmetic: with the
+-- same aspect as the surface, bigger art covers exactly the surface and
+-- nothing more, no matter how big it is.
+--
+-- So oversized art goes down at 1:1, centred, and the display crops it.
+
+local placeOn = mod.exports.bleedPlaceOn
+
+do
+  io.write("art the size of the surface, or smaller, is covered as before\n")
+  local s, dx, dy = placeOn(304, 144, 304, 144)
+  eq(s, 1, "the exact size lands 1:1")
+  eq(dx, 0, "at the origin")
+  eq(dy, 0, "on both axes")
+
+  s, dx, dy = placeOn(160, 144, 304, 144)
+  eq(s, 304 / 160, "art narrower than the surface is scaled up to cover it")
+  eq(dy, (144 - 144 * (304 / 160)) * 0.5, "and the overflow is centred")
+
+  s = placeOn(304, 144, 160, 144)
+  eq(s, 1, "the wide art on the classic surface stays 1:1 -- it already "
+     .. "covers it, and 72 authored columns either side are the wings")
+end
+
+do
+  io.write("...and art bigger than the surface is placed 1:1 and cropped\n")
+  local s, dx, dy = placeOn(608, 288, 304, 144)
+  eq(s, 1, "a 608x288 backdrop is NOT scaled down to the surface")
+  eq(dx, -152, "its centre sits on the surface's centre")
+  eq(dy, -72, "on both axes")
+
+  s, dx, dy = placeOn(608, 288, 160, 144)
+  eq(s, 1, "the same file on the classic surface, also 1:1")
+  eq(dx, -224, "centred there too")
+  eq(dy, -72, "which puts the same middle 160x144 on the game screen")
+
+  -- An odd margin still has to land on the pixel grid: half a pixel of
+  -- offset is a row of the picture blended across two rows of the screen,
+  -- and these are pixel backdrops behind pixel sprites.
+  s, dx, dy = placeOn(305, 145, 304, 144)
+  eq(dx, -1, "an odd margin is floored rather than left on a half pixel")
+  eq(dy, -1, "on both axes")
+
+  -- Bigger on one axis only is NOT the oversized case: 1:1 would leave the
+  -- surface's own field uncovered on the other, which is a hole in the
+  -- battle rather than scenery in the bars.
+  s = placeOn(608, 144, 304, 144)
+  eq(s, 1, "as wide as you like at the surface's exact height is still 1:1")
+  s = placeOn(608, 100, 304, 144)
+  eq(s, 144 / 100, "but art SHORTER than the surface is covered, not placed")
+  s = placeOn(200, 288, 304, 144)
+  eq(s, 304 / 200, "and so is art narrower than it")
+end
+
+do
+  io.write("...and the bars are told the same thing the field was\n")
+  -- The picture-in-picture bug was the field and the bars disagreeing about
+  -- this placement.  They cannot now: both go through placeOn, and this is
+  -- the join, checked on the oversized case where the two rules differ most.
+  local VIEW = { ww = 1600, wh = 900, ox = 40, oy = 90, vpw = 1520, vph = 720 }
+  local sx, sy, x, y = mod.exports.bleedSurfaceFit(608, 288, 304, 144, VIEW)
+  eq(sx, 5, "the picture is drawn at the surface's own scale")
+  eq(sy, 5, "on both axes, so it is not stretched")
+  eq(x, 40 - 152 * 5, "and it starts 152 backdrop pixels left of the surface")
+  eq(y, 90 - 72 * 5, "and 72 above it -- one photograph, one magnification")
+end
+
 io.write(("\n%d passed, %d failed\n"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)
