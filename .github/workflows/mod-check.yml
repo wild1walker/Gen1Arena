@@ -1,0 +1,32 @@
+# Community asset compliance: no bundled ROMs, dumped asset packs or 1:1 rips.
+#
+# Runs the community scanner on every push and pull request, so a release can
+# never be cut from a tree that would be taken down.
+#
+# fail-on-flagged is false on purpose.  REJECT -- a ROM header, a dumped
+# archive, or a sprite within Hamming distance 14 of a canonical one -- is a
+# hard stop and fails the build.  FLAGGED (distance 15-30) is the tool asking a
+# human to look at a demake or an adapted silhouette, which is not a build
+# failure; the diff previews are uploaded as an artifact so it can be looked at.
+name: Mod Verification Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Run Mod Scanner
+        uses: 1Jamie/mod-scanner@main
+        with:
+          path: '.'
+          fail-on-flagged: 'false'
+          save-previews: 'true'
+          upload-artifacts: 'true'
