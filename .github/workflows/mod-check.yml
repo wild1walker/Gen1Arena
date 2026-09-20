@@ -1,13 +1,24 @@
 # Community asset compliance: no bundled ROMs, dumped asset packs or 1:1 rips.
 #
-# Runs the community scanner on every push and pull request, so a release can
-# never be cut from a tree that would be taken down.
+# This runs the community scanner (1Jamie/mod-scanner) directly rather than
+# through its composite action.  The action cannot work in a consumer
+# repository as written:
 #
-# fail-on-flagged is false on purpose.  REJECT -- a ROM header, a dumped
-# archive, or a sprite within Hamming distance 14 of a canonical one -- is a
-# hard stop and fails the build.  FLAGGED (distance 15-30) is the tool asking a
-# human to look at a demake or an adapted silhouette, which is not a build
-# failure; the diff previews are uploaded as an artifact so it can be looked at.
+#   cache-dependency-path: ${{ github.action_path }}/requirements.txt
+#
+# actions/setup-python globs that path relative to the WORKSPACE, not the
+# action directory, so it never matches and the step fails with "No file in
+# .../<repo> matched to [.../mod-scanner/main/requirements.txt or
+# **/pyproject.toml]".  Every step after it is skipped, so the scan never runs
+# and the job goes red on a repository that is perfectly clean.  Any repo
+# without its own requirements.txt or pyproject.toml hits this.
+#
+# Same tool, same config, same thresholds -- just invoked by hand.
+#
+# fail-on-flagged is off on purpose.  REJECT (a ROM header, a dumped archive,
+# or a sprite within Hamming distance 14 of a canonical one) fails the build.
+# FLAGGED (15-30) is the tool asking a human to look at a demake, which is not
+# a build failure; the diff previews go up as an artifact instead.
 name: Mod Verification Check
 
 on:
@@ -20,13 +31,44 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run Mod Scanner
-        uses: 1Jamie/mod-scanner@main
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          path: '.'
-          fail-on-flagged: 'false'
-          save-previews: 'true'
-          upload-artifacts: 'true'
+          python-version: '3.11'
+
+      - name: Install mod-scanner
+        run: |
+          git clone --depth 1 https://github.com/1Jamie/mod-scanner.git "$RUNNER_TEMP/mod-scanner"
+          python -m pip install --upgrade pip
+          pip install "$RUNNER_TEMP/mod-scanner"
+
+      # The reference hashes are indexed from the six pret decomp repositories
+      # on first run, which is the slow part.  Keyed on the scanner's config so
+      # a threshold or source change rebuilds it.
+      - name: Cache reference hash database
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: mod-scanner-ref-db-${{ runner.os }}-${{ hashFiles('**/mod-scanner/config.yaml') }}
+          restore-keys: mod-scanner-ref-db-${{ runner.os }}-
+
+      - name: Scan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          mod-scanner --config "$RUNNER_TEMP/mod-scanner/config.yaml" \
+            scan . \
+            --no-fail-on-flagged \
+            --save-previews \
+            --preview-dir ./scan_previews
+
+      - name: Upload diff previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mod-scanner-diffs
+          path: ./scan_previews/
+          if-no-files-found: ignore
