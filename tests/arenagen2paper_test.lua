@@ -78,6 +78,10 @@ local IMAGE_DATA = {
 }
 
 local fills, draws, keyed, prints
+-- What a scratch canvas reads back as, and how many were made: a canvas made
+-- inside a frame is a readback inside a draw, which is the stutter.
+local CANVAS_DATA = function() return IMAGE_DATA end
+local readbacks = 0
 _G.love = _G.love or {}
 
 -- The ImageData the paper mask is built into, so a case can ask which pixels
@@ -101,7 +105,7 @@ local pen = { 1, 1, 1, 1 }
 love.graphics = {
   rectangle = function(mode, x, y, w, h)
     fills[#fills + 1] = { kind = "rect", x = x, y = y, w = w, h = h,
-                          color = { pen[1], pen[2], pen[3] } }
+                          color = { pen[1], pen[2], pen[3] }, alpha = pen[4] }
   end,
   setColor = function(r, g, b, a) pen = { r or 0, g or 0, b or 0, a or 1 } end,
   getColor = function() return pen[1], pen[2], pen[3], pen[4] end,
@@ -126,8 +130,13 @@ love.graphics = {
              setFilter = function() end, getWidth = function() return 160 end,
              getHeight = function() return 144 end }
   end,
+  -- ONE kind of canvas, whose pixels are whatever picture is in front of it
+  -- now -- which is what a real one is.  The mod keeps a scratch canvas per
+  -- pic size and draws each pic into it, so a stub that froze its pixels at
+  -- creation would hand every later pic the first pic's pixels.
   newCanvas = function()
-    return { newImageData = function() return IMAGE_DATA end }
+    readbacks = readbacks + 1
+    return { newImageData = function() return CANVAS_DATA() end }
   end,
   draw = function(image, a, b, c, d)
     draws[#draws + 1] = { image = image, a = a, b = b, c = c, d = d }
@@ -173,6 +182,23 @@ Chrome = {
 }
 Chrome.clear = function()
   Chrome.paletteFill(0, 0, Chrome.SCREEN_W * 8, Chrome.SCREEN_H * 8)
+end
+-- A box is Font.drawBox through the palette: its paper is one fill the size of
+-- the box, then the border tiles.  Recorded as kind "box" so the cases below
+-- can tell a box's paper from a string's.
+Chrome.paletteBox = function(tx, ty, tw, th)
+  love.graphics.setColor(1, 1, 1, 1)
+  local before = #fills
+  love.graphics.rectangle("fill", tx * 8, ty * 8, tw * 8, th * 8)
+  if fills[before + 1] then fills[before + 1].kind = "box" end
+  borders = (borders or 0) + 1
+end
+Chrome.box = function(tx, ty, tw, th) Chrome.paletteBox(tx, ty, tw, th) end
+Chrome.cursorThrough = function(tx, ty)
+  love.graphics.setColor(1, 1, 1, 1)
+  local before = #fills
+  love.graphics.rectangle("fill", tx * 8, ty * 8, 8, 8)
+  if fills[before + 1] then fills[before + 1].kind = "cursor" end
 end
 Chrome.printRightThrough = function(text, txEnd, ty, palette)
   return Chrome.printThrough(text, txEnd, ty, palette)
@@ -226,7 +252,10 @@ BattleState.drawPanel = function(self)
   end
   self:drawPlayerHud()
   -- The bottom strip, which is NOT the HUD: its box really does have paper.
+  Chrome.box(0, 12, 20, 6)
   Chrome.printThrough("HELLO", 1, 14, Chrome.DEFAULT_BOX_PALETTE)
+  Chrome.cursorThrough(0, 14, Chrome.DEFAULT_BOX_PALETTE)
+  if self.extra then self.extra() end
   -- A piece of chrome that fills part of the screen -- the START menu's own
   -- block is one -- which must not be mistaken for the field.
   if self.partialFill then Chrome.paletteFill(0, 104, 80, 40) end
@@ -331,6 +360,7 @@ local function screen(opts)
     battle = opts.battle ~= false and { wild = true } or nil,
     drawsPics = opts.drawsPics,
     partialFill = opts.partialFill,
+    extra = opts.extra,
   }
   -- The class behind it, so `self:drawEnemyHud()` reaches the wrapped method
   -- the way it does on a live instance.
@@ -491,10 +521,24 @@ end
 do
   io.write("paper inside a pic\n")
   local outside = love.graphics.draw
+  -- The FIRST frame a pic is on screen only asks for its paper: building it
+  -- reads the pic back and makes a texture, and doing either inside the draw
+  -- is the stutter at the start of a battle on a handheld.
+  local before = readbacks
   frame(screen())
+  eq(readbacks, before, "the first frame reads nothing back inside the draw")
+  eq(#picBlits(), 2, "so it draws the two pics and no paper yet")
+  ok(mod.exports.paperQueued() >= 1, "and remembers the pic as wanted")
 
+  -- The update builds it, between frames, one picture per call.
+  local guard = 0
+  while mod.exports.buildQueuedCutouts() and guard < 20 do guard = guard + 1 end
+  eq(mod.exports.paperQueued(), 0, "the update drains what was asked for")
+
+  frame(screen())
   local blits = picBlits()
-  eq(#blits, 4, "two pics, and each one drawn twice: its paper, then it")
+  eq(#blits, 4, "from the next frame: two pics, and each one drawn twice -- "
+     .. "its paper, then it")
   ok(blits[1] and blits[1].image and blits[1].image.mask,
      "the paper goes down first, or it would cover the pic")
   eq(blits[2] and blits[2].image, IMAGE, "and the pic itself second")
@@ -550,18 +594,16 @@ do
   -- a mod's full-colour replacement art, which has too many shades to be a
   -- 2bpp pic, is refused for the same reason the Gen 1 arm refuses it.
   local solid = { getDimensions = function() return 8, 8 end }
-  local realCanvas = love.graphics.newCanvas
-  love.graphics.newCanvas = function()
-    return { newImageData = function()
-      return {
-        getDimensions = function() return 8, 8 end,
-        getPixel = function(_, x, y) return 0, 0, 0, 1 end,
-      }
-    end }
+  local was = CANVAS_DATA
+  CANVAS_DATA = function()
+    return {
+      getDimensions = function() return 8, 8 end,
+      getPixel = function(_, x, y) return 0, 0, 0, 1 end,
+    }
   end
   eq(mod.exports.picPaperImage(solid), nil,
      "a pic with no hole in it builds no paper and costs one readback")
-  love.graphics.newCanvas = realCanvas
+  CANVAS_DATA = was
 end
 
 -- ---- cutting a cart pic out of its square
@@ -580,19 +622,17 @@ end
 local function shadePic(w, h, plot)
   local img = { getDimensions = function() return w, h end,
                 setFilter = function() end }
-  local realCanvas = love.graphics.newCanvas
-  love.graphics.newCanvas = function()
-    return { newImageData = function()
-      return {
-        getDimensions = function() return w, h end,
-        getPixel = function(_, x, y)
-          local v = plot(x, y)
-          return v, v, v, 1
-        end,
-      }
-    end }
+  local was = CANVAS_DATA
+  CANVAS_DATA = function()
+    return {
+      getDimensions = function() return w, h end,
+      getPixel = function(_, x, y)
+        local v = plot(x, y)
+        return v, v, v, 1
+      end,
+    }
   end
-  return img, function() love.graphics.newCanvas = realCanvas end
+  return img, function() CANVAS_DATA = was end
 end
 
 do
@@ -626,6 +666,64 @@ do
     -- always did rather than a black hole.
     local corner = mask:at(0, 0)
     eq(corner and corner[1], 1, "and the cut pixels keep their colour")
+  end
+end
+
+do
+  -- "There are sprites where white areas are being ignored and/or cropped
+  -- incorrectly."  The player's back pic is cut off by its own frame, so the
+  -- figure runs into the bottom edge -- and a white shirt inside it touches
+  -- that edge as well.  The flood used to start from every field pixel on the
+  -- border, poured in through the shirt, and the backdrop showed through
+  -- Kris's back.
+  local function plot(x, y)
+    local inBody = x >= 2 and x <= 7 and y >= 3
+    local inShirt = x >= 3 and x <= 6 and y >= 5
+    if inBody and not inShirt then return 0 end
+    return 1
+  end
+  local img, restore = shadePic(10, 10, plot)
+  local cut = mod.exports.picCutoutImage(img, true)
+  restore()
+  local mask = cut and cut.mask
+  ok(mask ~= nil, "a back pic cut off at the waist is still cut out")
+  if mask then
+    local function alphaAt(x, y)
+      local px = mask:at(x, y)
+      return px and px[4] or nil
+    end
+    eq(alphaAt(4, 9), 1,
+       "the white shirt where it meets the bottom edge is KEPT")
+    eq(alphaAt(5, 6), 1, "and the shirt above it")
+    eq(alphaAt(0, 9), 0, "the field beside the body on that edge is cut")
+    eq(alphaAt(9, 9), 0, "on both sides")
+    eq(alphaAt(4, 1), 0, "and the field above the head")
+  end
+end
+
+do
+  -- ...and ONLY a back pic.  A trainer facing you stands on the bottom edge,
+  -- and the field between two feet that reach it is outside.  The first
+  -- version closed every edge of every pic, and over Crystal's own trainers
+  -- that left a white wedge between the legs of the Lass, the Picnicker, the
+  -- Biker, Bruno and Red.
+  local function plot(x, y)
+    local leftLeg = x >= 2 and x <= 3 and y >= 4
+    local rightLeg = x >= 6 and x <= 7 and y >= 4
+    local body = x >= 2 and x <= 7 and y >= 1 and y <= 4
+    if leftLeg or rightLeg or body then return 0 end
+    return 1
+  end
+  local img, restore = shadePic(10, 10, plot)
+  local cut = mod.exports.picCutoutImage(img)
+  restore()
+  local mask = cut and cut.mask
+  ok(mask ~= nil, "a trainer standing on the bottom edge is cut out")
+  if mask then
+    local px = mask:at(4, 9)
+    eq(px and px[4], 0, "and the field between the feet is cut with the rest")
+    px = mask:at(5, 6)
+    eq(px and px[4], 0, "all the way up to the body")
   end
 end
 
@@ -704,20 +802,18 @@ do
   -- Art that already has transparency is the PAPER's case, not this one.
   local img = { getDimensions = function() return 8, 8 end,
                 setFilter = function() end }
-  local realCanvas = love.graphics.newCanvas
-  love.graphics.newCanvas = function()
-    return { newImageData = function()
-      return {
-        getDimensions = function() return 8, 8 end,
-        getPixel = function(_, x, y)
-          if x == 0 then return 1, 1, 1, 0 end
-          return 0, 0, 0, 1
-        end,
-      }
-    end }
+  local was = CANVAS_DATA
+  CANVAS_DATA = function()
+    return {
+      getDimensions = function() return 8, 8 end,
+      getPixel = function(_, x, y)
+        if x == 0 then return 1, 1, 1, 0 end
+        return 0, 0, 0, 1
+      end,
+    }
   end
   local cut = mod.exports.picCutoutImage(img)
-  love.graphics.newCanvas = realCanvas
+  CANVAS_DATA = was
   eq(cut, nil, "a pic that already has alpha is left to the paper arm")
 end
 
@@ -1020,6 +1116,54 @@ do
   mod.stored.bleed = nil
 end
 
+do
+  io.write("BATTLE BG = WORLD keeps the world round the battle\n")
+  -- *"With the mod enabled, the background is always black"* -- a portrait
+  -- phone, BATTLE BG = WORLD, the overworld showing under the battle with the
+  -- mod off and black there with it on.  Gold raises the hook twice on a
+  -- WORLD frame and the one after the battle says `worldActive = false`, so
+  -- the payload cannot be what decides this: the battle's own `bgMode` is.
+  -- Driven exactly as Game2:drawScene drives it -- the world call first, the
+  -- battle, then the second call.
+  local self = screen({ drawsPics = false })
+  self.bgMode = function() return "world" end
+  local view = { ww = 400, wh = 800, ox = 40, oy = 56, vpw = 320, vph = 288 }
+  local before = #(fills or {})
+  bars({ ww = view.ww, wh = view.wh, ox = view.ox, oy = view.oy,
+         vpw = view.vpw, vph = view.vph, worldActive = true })
+  frame(self)
+  ok(tookTheField(self), "the backdrop is still in the field")
+  local afterFrame = #fills
+  local drawsAfterFrame = #draws
+  ok(bars(view), "the hook passes the frame along")
+  eq(#kinds("rect") - #(function()
+       local out = {}
+       for i = 1, afterFrame do
+         if fills[i].kind == "rect" then out[#out + 1] = fills[i] end
+       end
+       return out
+     end)(), 0,
+     "and paints nothing into the bars: the overworld the engine drew there "
+     .. "is what the player chose to see")
+  eq(#draws, drawsAfterFrame, "nor draws the picture into them")
+  ok(mod.exports.arenaSurroundIsWorld(self), "the battle is read as WORLD")
+
+  -- ...and the two other modes still get the bars, so this is a reading of
+  -- the player's choice rather than the bars switched off.
+  self.bgMode = function() return "white" end
+  frame(self)
+  local whiteBefore = #kinds("rect")
+  bars(view)
+  ok(#kinds("rect") > whiteBefore, "WHITE still has its bars answered for")
+  self.bgMode = function() return "black" end
+  frame(self)
+  local blackBefore = #kinds("rect")
+  bars(view)
+  ok(#kinds("rect") > blackBefore, "and so does BLACK")
+  ok(not mod.exports.arenaSurroundIsWorld(self), "which is not read as WORLD")
+  local _ = before
+end
+
 -- ------------------------------------------- the rectangle the bars are the
 -- complement OF
 --
@@ -1131,6 +1275,218 @@ do
 
   BattleState.wideLayout = wasWide
   mod.stored.bleed = nil
+end
+
+do
+  io.write("CLEAR BOXES: the boxes' paper at the strength picked\n")
+  -- "Full white can be a bit aggressive on the colored battle background, a
+  -- transparent option will combine best of both ... 0-100% transparency
+  -- with steps of 10%."
+  local row
+  for _, r in ipairs(mod.rows or {}) do
+    if r.key == "box_clear" then row = r end
+  end
+  ok(row, "CLEAR BOXES is a row on Gold")
+  eq(row and row.default, 0, "and it ships OFF: the cart's own solid boxes")
+  eq(row and #row.choices, 11, "OFF and ten steps of ten")
+  eq(row and row.choices[11][1], "100%", "up to 100%")
+
+  local function boxFill()
+    for _, f in ipairs(fills) do if f.kind == "box" then return f end end
+    return nil
+  end
+
+  frame(screen({ drawsPics = false }))
+  eq(boxFill() and boxFill().alpha, 1, "OFF: the strip's box is solid paper")
+  eq(#kinds("rect"), 1, "and its string keeps its own paper cell")
+  eq(#kinds("cursor"), 1, "and so does the cursor")
+
+  mod.stored.box_clear = 30
+  frame(screen({ drawsPics = false }))
+  local f = boxFill()
+  ok(f and math.abs(f.alpha - 0.7) < 1e-9,
+     "30%: the box's paper is laid at seven tenths")
+  eq(pen[4], 1, "and the pen is handed back at full strength")
+  eq(#kinds("rect"), 0,
+     "the string's own cell goes -- the box under it is already its paper, "
+     .. "and a second layer would print a band behind the line")
+  eq(#kinds("cursor"), 0, "and so does the cursor's")
+  local hello
+  for _, printed in ipairs(prints) do
+    if printed.text == "HELLO" then hello = printed end
+  end
+  eq(hello and hello.palette, Chrome.DEFAULT_BOX_PALETTE,
+     "while the string keeps the box's own ink, theme and all -- the HUD's "
+     .. "black is for ink on a photograph, and this is ink in a box")
+
+  mod.stored.box_clear = 100
+  frame(screen({ drawsPics = false }))
+  eq(boxFill(), nil, "100%: no paper at all, border and ink on the picture")
+
+  -- Only the bottom strip.  Gold draws boxes OVER the HUD and the pics too --
+  -- FIGHT's type/PP box over the player's back at (0,8), the YES/NO over the
+  -- player's HUD at (14,7) -- and those hide what is under them on the cart.
+  -- See-through, they printed their text across the mon and the HP numbers.
+  mod.stored.box_clear = 50
+  local function overHud()
+    Chrome.box(0, 8, 11, 5)
+    Chrome.printThrough("TYPE/", 1, 9, Chrome.DEFAULT_BOX_PALETTE)
+    Chrome.box(14, 7, 6, 5)
+    Chrome.cursorThrough(15, 8, Chrome.DEFAULT_BOX_PALETTE)
+  end
+  frame(screen({ drawsPics = false, extra = overHud }))
+  local boxes = kinds("box")
+  eq(#boxes, 3, "the strip's box and the two over the HUD each lay paper")
+  eq(boxes[2] and boxes[2].alpha, 1, "the box over the back pic keeps it solid")
+  eq(boxes[3] and boxes[3].alpha, 1, "and so does the YES/NO over the HUD")
+  eq(#kinds("rect"), 1, "a line in a solid box keeps its own paper cell")
+  eq(#kinds("cursor"), 1, "and so does a cursor in one")
+
+  -- The strip's boxes nest: the command menu is drawn inside the message
+  -- box.  Paper laid twice is twice as opaque, so the strip read 50% on the
+  -- left and 75% on the right.  The inner box lays none of its own.
+  local function menu()
+    Chrome.box(8, 12, 12, 6)
+    Chrome.printThrough("FIGHT", 10, 14, Chrome.DEFAULT_BOX_PALETTE)
+  end
+  frame(screen({ drawsPics = false, extra = menu }))
+  boxes = kinds("box")
+  eq(#boxes, 1, "a box inside a cleared box lays no second paper")
+  ok(boxes[1] and math.abs(boxes[1].alpha - 0.5) < 1e-9,
+     "so the strip is one strength edge to edge")
+  eq(#kinds("rect"), 0, "and a line in the inner box loses its cell too")
+
+  -- CLEAR HUD = OFF asks for the cart's HUD, paper cells and all; CLEAR BOXES
+  -- is about the boxes and leaves the HUD's text alone.
+  mod.stored.hud_clear = false
+  frame(screen({ drawsPics = false }))
+  local cells = 0
+  for _, f in ipairs(kinds("rect")) do
+    if f.y < 12 * 8 then cells = cells + 1 end
+  end
+  eq(cells, 2, "with CLEAR HUD off, both HUD lines keep their paper cells")
+  mod.stored.hud_clear = nil
+
+  -- And only over a backdrop: on Gold's own white field there is nothing
+  -- behind a box to see.
+  mod.stored.box_clear = 50
+  mod.stored.enabled = false
+  frame(screen({ drawsPics = false }))
+  eq(boxFill() and boxFill().alpha, 1,
+     "with no backdrop the box is the cart's, whatever the row says")
+  mod.stored.enabled = nil
+  mod.stored.box_clear = nil
+end
+
+-- TIME OF DAY runs last: it reloads the module into a fresh mod, and every
+-- wrapper from then on reads THAT mod's options.
+do
+  io.write("TIME OF DAY: the field at night goes through the cart's night\n")
+  -- The shader is the GPU half of TIME OF DAY: an affine map of RGB fitted to
+  -- the live map's DAY and NITE palettes.  What is asserted here is the DRAW:
+  -- the backdrop is painted with that shader bound and its four uniforms
+  -- sent, the shader the caller had is put back, and a host with no shaders
+  -- gets a tint through setColor instead of nothing.
+  local bound, sent = nil, {}
+  local SHADER = { send = function(_, name, value) sent[name] = value end }
+  local realSet, realGet, realNew = love.graphics.setShader,
+    love.graphics.getShader, love.graphics.newShader
+  love.graphics.setShader = function(s) bound = s end
+  love.graphics.getShader = function() return bound end
+  love.graphics.newShader = function() return SHADER end
+  local day = {}
+  for slot = 1, 8 do
+    day[slot] = { { 216, 248, 216 }, { 168, 168, 168 }, { 104, 104, 104 },
+                  { 56, 56, 56 } }
+  end
+  package.loaded["src.world.gen2.Palettes"] = {
+    bgSet = function(_, _, daytime)
+      if daytime == "DAY" then return day end
+      local out = {}
+      for slot = 1, 8 do
+        out[slot] = {}
+        for i = 1, 4 do
+          local c = day[slot][i]
+          out[slot][i] = { c[1] * 0.5, c[2] * 0.5, c[3] * 0.9 }
+        end
+      end
+      return out
+    end,
+  }
+
+  local function nightScreen(daytime)
+    local self = screen({ drawsPics = false })
+    self.game = { world = {
+      daytime = daytime, palettes = "live",
+      map = { def = { id = "ROUTE_29", tileset = "TILESET_JOHTO",
+                      environment = "ROUTE", group = 24 } },
+      currentLandmarkId = function() return "LANDMARK_ROUTE_29" end,
+    } }
+    return self
+  end
+
+  local seen
+  local realDraw = love.graphics.draw
+  love.graphics.draw = function(image, ...)
+    if type(image) == "table" and image.getWidth then
+      seen = seen or { shader = bound }
+    end
+    return realDraw(image, ...)
+  end
+
+  local caller = { "the caller's shader" }
+  bound = caller
+  seen, sent = nil, {}
+  frame(nightScreen("NITE"))
+  ok(seen and seen.shader == SHADER,
+     "the backdrop is drawn with the TIME OF DAY shader bound")
+  ok(sent.rowR and sent.rowG and sent.rowB and sent.offset,
+     "and its transform sent: three rows and an offset")
+  eq(bound, caller, "and the caller's shader is back afterwards")
+
+  bound, seen = nil, nil
+  frame(nightScreen("DAY"))
+  ok(seen and seen.shader == nil,
+     "by day the backdrop is drawn with no shader at all, as before")
+
+  -- No shaders on this host: the period's answer for white, as a tint.
+  local tints = {}
+  local realColor = love.graphics.setColor
+  love.graphics.setColor = function(r, g, b, a)
+    tints[#tints + 1] = { r, g, b }
+    return realColor(r, g, b, a)
+  end
+  love.graphics.newShader = function() error("no shaders here", 0) end
+  -- A fresh load, so the one compile attempt is made against this host.
+  local fresh = { id = mod.id, path = mod.path, exports = {}, stored = {},
+                  hooked = {}, events_on = {}, logged = {} }
+  for k, v in pairs(mod) do if fresh[k] == nil then fresh[k] = v end end
+  fresh.options = {
+    define = function() end,
+    get = function(_, key) return fresh.stored[key] end,
+    set = function(_, key, value) fresh.stored[key] = value end,
+  }
+  fresh.hooks = { wrap = function(_, name, fn) fresh.hooked[name] = fn end }
+  fresh.events = { on = function(_, name, fn) fresh.events_on[name] = fn end }
+  BattleState.__gen1arena = nil
+  BattleState.drawScene = function(self, bodyFn)
+    drawn[#drawn + 1] = "scene"
+    if bodyFn then bodyFn() else self:drawPanel() end
+  end
+  load_("main.lua", fresh)
+  fresh.events_on["game.ready"]({ game = {} })
+  tints = {}
+  frame(nightScreen("NITE"))
+  local tinted = false
+  for _, c in ipairs(tints) do
+    if c[1] < 0.9 and c[3] > c[1] then tinted = true end
+  end
+  ok(tinted, "a host with no shaders paints the backdrop through a night tint")
+
+  love.graphics.setShader, love.graphics.getShader = realSet, realGet
+  love.graphics.newShader, love.graphics.draw = realNew, realDraw
+  love.graphics.setColor = realColor
+  package.loaded["src.world.gen2.Palettes"] = nil
 end
 
 io.write(("arena gen2 paper: %d passed, %d failed\n"):format(passed, failed))

@@ -210,10 +210,57 @@ Gold picks a battle's scene from a different set of facts than Red does, so
 the lookup is its own rather than the Kanto one with names swapped. Tileset
 first, then the landmark, then the trainer's class for the ones that have a
 scene of their own — a gym leader is fought in their gym, the champion at the
-Plateau. Sea and lake are separated by landmark, as they are on Red.
+Plateau. Sea and lake are separated by the map's **fishing group** —
+`OCEAN`, `WHIRL_ISLANDS`, `QWILFISH`, `REMORAID` are the sea, `LAKE`, `POND`,
+`GYARADOS`, `DRATINI` inland — and by landmark where the group is `SHORE`,
+which is also what a header with no group says.
 
 Everything else behaves as it does on Red: the same two crops, the same
 palette correction, the same `BATTLE SCENES` row to turn the whole thing off.
+And three rows of Gold's own:
+
+- **TIME OF DAY** (on): the picture goes through the map's own night and
+  morning, fitted to the cart's `DAY` and `NITE` palettes for that map, so a
+  field at midnight is that field's night rather than a blue wash. Outdoors
+  only.
+- **CLEAR BOXES** (OFF to 100%): the bottom strip's boxes lay their paper at
+  the strength picked; border and ink stay. Boxes over the HUD and the pics
+  keep theirs.
+- With the cart's **BATTLE BG** on `WORLD`, the world shows round the battle
+  and the bars are not drawn.
+
+`tools/audit_gen2_arena.py <pokecrystal>` replays every Crystal map header
+through these tables and prints where each kind of place lands.
+
+## On FireRed, LeafGreen and Emerald
+
+This is where the art comes from — every picture is from the *Battle
+Backgrounds Patch FR*, 240x112 FireRed battle-field art — and on a Gen 3 boot
+it goes back onto that field **1:1**, through `BattleBg.draw`, the one call
+that paints a GBA battle's background. The arm is `gen3.lua`; `main.lua` hands
+over to it before requiring anything.
+
+- **Which picture** starts from the cart's own terrain (grass, long grass,
+  sand, water, pond, mountain, cave, building, or the cart's scene for a gym,
+  a leader or an Elite Four room) and the map narrows it: Viridian Forest and
+  Petalburg Woods are the forest, Icefall and Shoal Cave the ice cave, Mt.
+  Ember and the Magma Hideout the volcano, the Pokémon Tower and Mt. Pyre the
+  Tower, the S.S. Anne and the S.S. Tidal the ship, Route 111's sand the
+  desert, water underground the water cave, and a Kanto town its own roof
+  colours. A trainer battle takes the trainer's version where one is drawn.
+- **No picture** — the cart's own background — for underwater, link battles,
+  Route 113's ash, and Emerald's own scenes: the Battle Frontier, the
+  legendaries, the Hoenn Elite Four, and Wallace's room, which is under water.
+- **No platforms over it.** The cart keeps its platform ovals as layers for
+  the intro slide, but they are opaque tiles of its own ground, not cut-outs,
+  so they would print the vanilla ground over the picture. The art's own
+  ground carries the Pokémon, as it does on Red and Gold.
+- **The fit**: the middle 240 columns of the wide art, the picture's ground on
+  the field's bottom edge, its top rows mirrored upward where the art runs
+  eight short. Nothing is scaled.
+
+Anything that fails in that draw is the cart's background, said once in the
+log, and never an error in the battle's own draw.
 
 ## Town recolours
 

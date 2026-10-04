@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.37.0
+
+### Added
+
+- **FireRed, LeafGreen and Emerald.** The art is FireRed battle-field art in
+  the first place, and on a Gen 3 boot it goes back onto that field 1:1
+  (`gen3.lua`, through `BattleBg.draw`). The cart's own terrain picks the scene
+  and the map narrows it — Viridian Forest and Petalburg Woods, Kanto's towns
+  in their roof colours, Icefall and Shoal Cave, Mt. Ember and the Magma
+  Hideout, the Pokémon Tower and Mt. Pyre, the S.S. Anne and the S.S. Tidal,
+  Route 111's desert, water underground. Underwater, link battles, Route
+  113's ash and Emerald's own scenes (the Frontier, the legendaries, the
+  Hoenn Elite Four, Wallace's room) keep the cart's background, and so does
+  any failure in the paint — said once in the log, never an error in the
+  battle's draw. The cart's platform layers stay off the picture: they are
+  opaque tiles of the cart's own ground, not cut-out ovals. On a Gen 3 boot `main.lua` hands over to `gen3.lua` before it requires
+  anything, so no Red or Gold module is reached for.
+- **TIME OF DAY** (Gold, Silver, Crystal; on). The backdrop is drawn through
+  the map's own night and morning: a colour map fitted to the cart's `DAY` and
+  `NITE` (or `MORN`) palettes for the map, run as one small shader, or a tint
+  on a host without shaders. Outdoor places only.
+- **CLEAR BOXES** (Gold, Silver, Crystal; OFF). The bottom strip's boxes —
+  the message box and the command and move menus — lay their paper at 90%
+  down to 0% in steps of ten; border and ink stay. Boxes the cart draws over
+  the HUD and the pics (FIGHT's type and PP, the YES/NO, the level-up stats)
+  keep their paper, a menu nested in the message box lays no second layer,
+  and a line's own paper cell goes only inside a see-through box. Only while
+  a backdrop is up.
+- `tools/audit_gen2_arena.py` replays every map header in pret's Crystal
+  disassembly through the Gold tables, to read for the wrong kind of place.
+
+### Fixed
+
+- **BATTLE BG = WORLD keeps the world round a Gold battle.** With a backdrop
+  up the surround went black on every layout: the backdrop's own letterbox was
+  painted over the world. On `WORLD` it is the world; the bars are for the
+  other settings.
+- **The Olivine Lighthouse, Sprout Tower, the Tin Tower and traditional
+  houses** take the indoor hall, not the gym trainers' sports floor. The Tin
+  Tower's roof and Mt. Moon Square are open ground; the Lake of Rage is a field.
+- **Sea or lake by the map's fishing group** on Gold — `OCEAN`,
+  `WHIRL_ISLANDS`, `QWILFISH`, `REMORAID` are the sea; `LAKE`, `POND`,
+  `GYARADOS`, `DRATINI` inland; `SHORE` (also an unset header) falls back to
+  the coastal list, which now has Cherrygrove.
+- **A trainer battle no longer stalls as it opens on a handheld.** Each
+  backdrop was decoded twice; a pic was read back from the GPU in the middle
+  of the battle draw; its paper was built in that same frame. One decode now,
+  read-backs and paper between frames on `core.update`, two pictures an
+  update (so the frame a battle's pics first appear in has none yet, and the
+  next has both), and a battle's likely backdrops are prepared one at a time
+  while you walk.
+- **White inside the player's back stays white.** The Gold cut-out flooded
+  inward from every edge pixel, so Kris's white shirt, which runs into the
+  bottom of her back pic, went with the square. A back pic's bottom edge now
+  seeds only past the figure; every other edge, and every trainer facing you,
+  is cut exactly as before (checked over all 67 of Crystal's trainer pics).
+
 ## 0.32.0
 
 - **Reverted 0.31.0's FILL zoom.** It made the backdrop reach every edge of the

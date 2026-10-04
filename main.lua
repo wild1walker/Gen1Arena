@@ -19,6 +19,39 @@
 -- and when it stops matching the mod degrades to vanilla rather than
 -- crashing or drawing a stale half-frame.
 
+-- ------- FireRed, LeafGreen and Emerald: gen3.lua, and nothing below
+--
+-- Before any require in this file, because every one of them names a Red or
+-- Gold module, and on a GBA boot a require of one is not a nil -- it is a
+-- line on the error list the player reads in MODS.  The GBA arm is its own
+-- file and shares nothing with this one but the pictures.  Inside the
+-- Gen1WildUI bundle this file is not reached on Gen 3 at all (features.lua
+-- names gen3.lua directly); this is the door for the standalone mod.
+do
+  local self = ...
+  local third = type(self) == "table" and self.generation == 3
+  if not third then
+    local okV, GameVersion = pcall(require, "src.core.GameVersion")
+    if okV and type(GameVersion) == "table"
+        and type(GameVersion.generation) == "function" then
+      local okCall, generation = pcall(GameVersion.generation)
+      third = okCall and generation == 3
+    end
+  end
+  if third then
+    local source = self:read("gen3.lua")
+    local chunk, problem = source
+      and load(source, "@" .. tostring(self.path) .. "/gen3.lua")
+    if not chunk then
+      self.log:error("gen3.lua did not load: %s", tostring(problem or "missing"))
+      return {}
+    end
+    local install = chunk()
+    if type(install) == "function" then install(self) end
+    return {}
+  end
+end
+
 local ok_bs, BattleState = pcall(require, "src.battle.BattleState")
 local ok_wb, WideBattle = pcall(require, "src.battle.WideBattle")
 local ok_rend, Renderer = pcall(require, "src.render.Renderer")
@@ -160,6 +193,9 @@ end
 local GEN2_SLOT_FILE = {
   -- places
   ice_path = "lorelei",        -- 15 Snow Cave -- the Ice Path, exactly
+  -- The plain 10 Indoors room under a name with no trainer scene beside it.
+  -- See TILESET_SLOT_GEN2's note on the Lighthouse.
+  hall = "indoor",
   -- the Elite Four, the Champion, and the fight on Mt Silver
   will = "champion",           -- 19 Space -- Will is the psychic
   koga = "agatha",             -- 17 Desert
@@ -202,12 +238,19 @@ local loaded = false
 -- is a flat backdrop that has nothing to trim.
 local BAND_MIN, bandTop = 8, setmetatable({}, { __mode = "k" })
 
-local function measureBand(path, iw, ih)
-  if not (love.image and type(love.image.newImageData) == "function") then
-    return nil
+-- `source` is the file's ImageData when the caller already decoded it, or its
+-- path, which costs a second decode of the same PNG.
+local function measureBand(source, iw, ih)
+  local data = source
+  if type(source) == "string" then
+    if not (love.image and type(love.image.newImageData) == "function") then
+      return nil
+    end
+    local ok, decoded = pcall(love.image.newImageData, source)
+    if not ok or not decoded then return nil end
+    data = decoded
   end
-  local ok, data = pcall(love.image.newImageData, path)
-  if not ok or not data then return nil end
+  if type(data) ~= "table" and type(data) ~= "userdata" then return nil end
   local okDim, dw, dh = pcall(data.getDimensions, data)
   if not okDim or dw ~= iw or dh ~= ih then return nil end
   local top = ih
@@ -242,14 +285,34 @@ local function loadImage(layout, name)
   local key = layout .. "/" .. name
   if images[key] ~= nil then return images[key] or nil end
   local path = mod.path .. "/" .. BACKDROP_DIR .. key .. ".png"
-  local ok, img = pcall(love.graphics.newImage, path)
-  if ok and img then
+  -- ONE DECODE.  The flat band below is measured off the file's pixels, and
+  -- that used to be a second `newImageData(path)` -- the whole PNG decoded
+  -- twice, on the first frame of the first battle each backdrop is in, which
+  -- on a handheld is a frame you see.  Decoding to ImageData and making the
+  -- texture out of it is the same picture for half the work.
+  local img, data
+  if love.image and type(love.image.newImageData) == "function" then
+    local okData, decoded = pcall(love.image.newImageData, path)
+    local okDim, dw = false, nil
+    if okData and decoded and type(decoded.getDimensions) == "function" then
+      okDim, dw = pcall(decoded.getDimensions, decoded)
+    end
+    if okDim and type(dw) == "number" then
+      local okImage, made = pcall(love.graphics.newImage, decoded)
+      if okImage and made then img, data = made, decoded end
+    end
+  end
+  if not img then
+    local ok, made = pcall(love.graphics.newImage, path)
+    if ok and made then img = made end
+  end
+  if img then
     -- Nearest filtering: these are pixel backdrops sitting behind pixel
     -- sprites, and the whole composite is integer-scaled afterwards.
     img:setFilter("nearest", "nearest")
     -- Once per file, off the file: see measureBand.
     local iw, ih = img:getDimensions()
-    bandTop[img] = measureBand(path, iw, ih) or false
+    bandTop[img] = measureBand(data or path, iw, ih) or false
     images[key] = img
   else
     images[key] = false
@@ -402,7 +465,9 @@ local TILESET_SLOT_GEN2 = {
   TILESET_HOUSE = "indoor",
   TILESET_PLAYERS_HOUSE = "indoor",
   TILESET_PLAYERS_ROOM = "indoor",
-  TILESET_TRADITIONAL_HOUSE = "indoor",
+  -- The Dance Theater and the Wise Trio's room: the Kimono Girls and the
+  -- three sages fight on tatami, not in front of a counter.  See `hall`.
+  TILESET_TRADITIONAL_HOUSE = "hall",
   TILESET_POKECENTER = "indoor",
   TILESET_MART = "indoor",
   TILESET_LAB = "indoor",
@@ -410,7 +475,23 @@ local TILESET_SLOT_GEN2 = {
   TILESET_FACILITY = "indoor",
   TILESET_TRAIN_STATION = "indoor",
   TILESET_RADIO_TOWER = "indoor",
-  TILESET_LIGHTHOUSE = "indoor",
+  -- ------- the Lighthouse, and every other building that is not an office
+  --
+  -- Reported from Gold: "Lighthouse misses battle background, instead it
+  -- renders a bar/playground".  The wild scene and the trainer scene of
+  -- `indoor` are different pictures, and the trainer one -- `trainer_indoor`,
+  -- FireRed's Indoor Trainer scene -- is a room with a counter, a PC and a
+  -- glass door: a Poke Center or an office.  Right for the Radio Tower, a
+  -- lab, the Rocket base.  Wrong for the six floors of a stone lighthouse,
+  -- every one of which is a trainer fight, and just as wrong for the sages of
+  -- Sprout Tower and the Kimono Girls.
+  --
+  -- So those take `hall`: the same plain 10 Indoors room `indoor` is, under a
+  -- name with no trainer scene beside it, so a trainer battle there lands on
+  -- the room rather than on the counter.  It is a FILE alias (GEN2_SLOT_FILE),
+  -- not new art.  The Fast Ship shares this tileset and keeps its own deck and
+  -- cabins through MAP_SLOT_GEN2.
+  TILESET_LIGHTHOUSE = "hall",
   -- The rooms the Elite Four and the Champion stand in.  A boss outranks the
   -- room (BOSS_KIND, below), so these only decide what a battle in one of
   -- those rooms that is NOT the boss looks like -- which on the cart is
@@ -444,7 +525,11 @@ local TILESET_SLOT_GEN2 = {
   -- their own colours to, and it is six: the Ice Path, the mansion, the
   -- Radio Tower, houses, the Battle Tower and the PokeCom Center.  No tower
   -- is on it.
-  TILESET_TOWER = "indoor",
+  --
+  -- And the plain interior for its TRAINERS too, which is the `hall` slot --
+  -- see the Lighthouse above.  The roof of the Tin Tower is not inside at
+  -- all and has its own row in MAP_SLOT_GEN2.
+  TILESET_TOWER = "hall",
 
   TILESET_CAVE = "cave",
   TILESET_DARK_CAVE = "cave",
@@ -537,6 +622,24 @@ local MAP_SLOT_GEN2 = {
   -- The Burned Tower's basement is where the three beasts are, and it is a
   -- collapsed pit rather than a room -- the floor above it is the interior.
   BURNED_TOWER_B1F = "cave",
+
+  -- ------- found by replaying these rules over every map header in Crystal
+  --
+  -- "Some locations have mismatched background" -- so every map the cart has
+  -- was run through this file's own lookup (tools/audit_gen2_arena.py), and
+  -- these were the ones whose answer was the wrong kind of place:
+  --
+  --   the Lake of Rage   a TOWN on the header, so its grass came up against
+  --                      Lake of Rage's own cobblestones -- a town plaza in
+  --                      the middle of the grass where the red GYARADOS is.
+  --   the Tin Tower roof the TILESET_TOWER rule made Ho-Oh's perch a room.  It
+  --                      is the top of the tallest thing in Johto, under the
+  --                      sky: the crag is the nearest scene to that.
+  --   Mt. Moon Square    open ground on top of Mt. Moon, rock rather than
+  --                      grass, which is what 6 Craggy is.
+  LAKE_OF_RAGE = "field",
+  TIN_TOWER_ROOF = "plateau",
+  MOUNT_MOON_SQUARE = "plateau",
 }
 
 -- The header's own classification, used when the tileset is not in the table
@@ -595,10 +698,9 @@ local GROUP_VARIANT_GEN2 = {
 -- change -- no edit here.
 local GEN2_VARIANT_DIR = "gen2/"
 
--- Sea or pond, by landmark, and hand-classified from the geography exactly as
--- the Gen 1 arm's OCEAN_MAP is -- nothing in the map data distinguishes a sea
--- tile from a lake tile on either cart.  Everything not named here is inland
--- and gets the Lake.
+-- Sea or pond -- asked of the cart first (`waterIsSea`, below), and of this
+-- hand-made list only when the cart cannot say.  Everything not named here is
+-- inland and gets the Lake.
 --
 -- Johto's coast is the west and the south: Olivine and Cianwood face the open
 -- water, Routes 40 and 41 are the crossing between them, and Routes 26 to 28
@@ -606,6 +708,7 @@ local GEN2_VARIANT_DIR = "gen2/"
 -- the Gen 1 arm names, because it is the same coast.
 local OCEAN_LANDMARK_GEN2 = {
   -- Johto
+  LANDMARK_CHERRYGROVE_CITY = true,
   LANDMARK_OLIVINE_CITY = true,
   LANDMARK_ROUTE_40 = true,
   LANDMARK_ROUTE_41 = true,
@@ -624,6 +727,41 @@ local OCEAN_LANDMARK_GEN2 = {
   LANDMARK_ROUTE_20 = true,
   LANDMARK_ROUTE_21 = true,
 }
+
+-- ------- the cart says which water it is, by what lives in it
+--
+-- The note above said nothing in the map data tells a sea from a lake.  On
+-- Gold that was never quite true: every map header carries a FISHING GROUP,
+-- and most groups are named for the water -- OCEAN for the open sea, LAKE and
+-- POND inland, and the species ones for the places they live (Qwilfish off
+-- Route 32 and Routes 12 and 13, Gyarados in the Lake of Rage and Fuchsia's
+-- pond, Dratini in the Dragon's Den and Route 45, the Whirl Islands' own).  A
+-- sea is where the cart puts sea fish.
+--
+-- SHORE is the one group that does not say.  It is the coast's -- Olivine,
+-- Cianwood, Route 40 -- and it is also what the header carries when nobody
+-- picked one, inland ponds included (Route 2's).  So SHORE, like NONE, falls
+-- back to the list.
+--
+-- Where the groups do say, they disagree with the list where the list was
+-- wrong: New Bark Town, Route 26 and Route 32 face the sea and were getting
+-- the Lake; Route 28's water and Fuchsia's are ponds and were getting the Sea.
+local SEA_FISH = {
+  OCEAN = true, WHIRL_ISLANDS = true,
+  QWILFISH = true, QWILFISH_SWARM = true, QWILFISH_NO_SWARM = true,
+  REMORAID = true, REMORAID_SWARM = true,
+}
+local LAKE_FISH = {
+  LAKE = true, POND = true, GYARADOS = true, DRATINI = true, DRATINI_2 = true,
+}
+
+local function fishWater(group)
+  if type(group) ~= "string" then return nil end
+  local name = group:gsub("^FISHGROUP_", "")
+  if SEA_FISH[name] then return true end
+  if LAKE_FISH[name] then return false end
+  return nil
+end
 
 -- The bosses, by trainer class.
 --
@@ -746,6 +884,15 @@ local function currentLandmarkGen2(battle)
   end
   local ok, id = pcall(world.currentLandmarkId, world)
   return ok and id or nil
+end
+
+-- Sea or lake for a water battle on Gold: the map's own fishing group, and the
+-- landmark list only where the header has no answer.  See `fishWater`.
+local function waterIsSeaGen2(battle)
+  local def = currentMapDefGen2(battle)
+  local byFish = fishWater(def and def.fishGroup)
+  if byFish ~= nil then return byFish end
+  return OCEAN_LANDMARK_GEN2[currentLandmarkGen2(battle) or ""] == true
 end
 
 -- The place slot, from the header rather than from a guess.  Tileset first,
@@ -927,8 +1074,8 @@ local NOT_A_BUILDING = {
   FOREST = true, CAVERN = true, UNDERGROUND = true,
 }
 
-local function pickBackdrop(battle, layout)
-  local kind = kindSlot(battle)
+local function pickBackdrop(battle, layout, kindOverride)
+  local kind = kindOverride or kindSlot(battle)
   local place = tilesetSlot(battle)
   -- Which town's colour, if any.  Red asks the map id; Gold asks the header's
   -- landmark, which answers for every map in the town rather than for the two
@@ -984,7 +1131,7 @@ local function pickBackdrop(battle, layout)
     end
     local open
     if gen2() then
-      open = OCEAN_LANDMARK_GEN2[currentLandmarkGen2(battle) or ""]
+      open = waterIsSeaGen2(battle)
     else
       open = OCEAN_MAP[currentMapId(battle) or ""]
     end
@@ -1073,16 +1220,24 @@ local function placeOn(iw, ih, surfW, surfH)
   return scale, (surfW - iw * scale) * 0.5, (surfH - ih * scale) * 0.5
 end
 
+-- The colour a backdrop is drawn in: white, except under TIME OF DAY on a
+-- host with no shader, where it is the period's own tint (see `daytimeTint`).
+local WHITE = { 1, 1, 1 }
+local pictureColor = WHITE
+
 local function drawCover(img, w, h)
   local iw, ih = img:getDimensions()
+  local c = pictureColor
   if iw == w and ih == h then
-    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setColor(c[1], c[2], c[3], 1)
     love.graphics.draw(img, 0, 0)
+    love.graphics.setColor(1, 1, 1, 1)
     return
   end
   local scale, dx, dy = placeOn(iw, ih, w, h)
-  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.setColor(c[1], c[2], c[3], 1)
   love.graphics.draw(img, dx, dy, 0, scale, scale)
+  love.graphics.setColor(1, 1, 1, 1)
 end
 
 -- ------------------------------------------------------------- the patch
@@ -1095,6 +1250,9 @@ local bleedImage, bleedW, bleedH = nil, OG_W, OG_H
 -- ...and WHERE the engine put that surface on screen this frame.  See
 -- `panelRect` for why the letterbox payload cannot be asked.
 local bleedPanel = nil
+-- ...and whether the battle that drew it is standing on the WORLD (BATTLE BG
+-- = WORLD).  See `surroundIsWorld`.
+local bleedWorld = false
 local pendingW, pendingH = OG_W, OG_H
 local outerCanvas = nil       -- the canvas bound when the battle draw began
 local consumed = false        -- the field fill has already been replaced
@@ -1135,6 +1293,222 @@ local function withoutShader(draw)
   if not ok then error(err, 0) end
 end
 
+-- ------- TIME OF DAY, on Gold
+--
+-- "Gen1arena on gen2 lacks night version for backgrounds, when playing after
+-- sunset."  Gold has a clock, and the overworld a battle starts from is
+-- painted for the hour: MORN, DAY or NITE, out of `environments[env][daytime]`
+-- (src/world/gen2/Palettes.lua, `bgSet`).  The backdrop was always DAY.
+--
+-- Nothing is redrawn for it.  A night version of a picture is a function of
+-- the picture and of what the cart does to colour at night, and the cart says
+-- exactly what that is: the same eight palettes, once for DAY and once for
+-- NITE.  So the backdrop is put through the TRANSFORM that takes one to the
+-- other -- an affine map of RGB, fitted by least squares to the live map's
+-- own pairs (`fitDaytime`) -- which is why the result reads as Gold at night
+-- rather than as a picture with the lights turned down: the cart's night is
+-- not darker so much as BLUER, light grey 27,31,27 becoming 15,14,24 and the
+-- greens turning teal, and a transform fitted to those pairs carries that.
+-- MORN is the same fit to the morning set, which on the cart is a warmer day.
+--
+-- It runs on the GPU, as a four-uniform shader over the same draw.  A host
+-- with no shaders gets the transform's answer for white as a plain tint,
+-- which is the same mood without the hue shift.
+--
+-- Only OUTDOORS.  `world.daytime` is the period the map is painted in, and a
+-- building's header pins DAY, so a gym or a Center never reaches here; a cave
+-- pins NITE on the cart, but a cave scene is already a cave and a night
+-- version of it is just a darker cave.  The forest is the exception the cart
+-- itself makes: Ilex Forest is pinned to night, and the forest scene takes it.
+local OUTDOOR_PLACE = {
+  field = true, town = true, forest = true, plateau = true, port = true,
+  deck = true, safari = true,
+}
+
+-- What pokecrystal's own bg_tiles.pal fits to, for an engine whose palettes
+-- cannot be read: rows of the 3x3 and the offset, RGB in 0..1.
+local DAYTIME_FALLBACK = {
+  NITE = { r = { 0.3894, 0.2101, 0.0979 }, g = { -0.0207, 0.5635, -0.0246 },
+           b = { -0.0179, 0.7363, 0.2468 },
+           bias = { -0.1095, -0.0581, -0.1147 } },
+  MORN = { r = { 1.0038, 0.0132, 0.0085 }, g = { 0, 1, 0 },
+           b = { -0.0423, -0.1456, 0.9066 }, bias = { -0.009, 0, 0.0994 } },
+}
+
+-- Solve the 4x4 normal equations by elimination.  nil when they are singular
+-- -- a palette set whose colours are all one, which leaves nothing to fit.
+local function solve4(a, b)
+  local m = {}
+  for i = 1, 4 do m[i] = { a[i][1], a[i][2], a[i][3], a[i][4], b[i] } end
+  for col = 1, 4 do
+    local best, at = 0, nil
+    for row = col, 4 do
+      if math.abs(m[row][col]) > best then best, at = math.abs(m[row][col]), row end
+    end
+    if not at or best < 1e-9 then return nil end
+    m[col], m[at] = m[at], m[col]
+    for row = 1, 4 do
+      if row ~= col then
+        local f = m[row][col] / m[col][col]
+        for k = col, 5 do m[row][k] = m[row][k] - f * m[col][k] end
+      end
+    end
+  end
+  return { m[1][5] / m[1][1], m[2][5] / m[2][2], m[3][5] / m[3][3],
+           m[4][5] / m[4][4] }
+end
+
+-- The transform from one eight-palette set to another, fitted to every
+-- colour pair the two share.  Pure: two `bgSet` answers in, rows and offset
+-- out.  The text palette (slot 8) never changes and is left out; and at night
+-- a LIT WINDOW is left out too -- PAL_BG_YELLOW's colour 0 is 30,30,11 after
+-- dark, a light switched on rather than the sky going dark.  It is told apart
+-- by the one thing night never does to anything else: it gets REDDER, and
+-- ends up warm.  (Night does raise blue, all over -- the grass going teal is
+-- the point -- so "brighter in some channel" would throw away the fit.)
+local function fitDaytime(daySet, otherSet, period)
+  if type(daySet) ~= "table" or type(otherSet) ~= "table" then return nil end
+  local ata = { { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 } }
+  local aty = { { 0, 0, 0, 0 }, { 0, 0, 0, 0 }, { 0, 0, 0, 0 } }
+  local pairs_ = 0
+  for slot = 1, 7 do
+    local dayPal, otherPal = daySet[slot], otherSet[slot]
+    for i = 1, 4 do
+      local d = type(dayPal) == "table" and dayPal[i]
+      local o = type(otherPal) == "table" and otherPal[i]
+      if type(d) == "table" and type(o) == "table" then
+        local x = { (d[1] or 0) / 255, (d[2] or 0) / 255, (d[3] or 0) / 255, 1 }
+        local y = { (o[1] or 0) / 255, (o[2] or 0) / 255, (o[3] or 0) / 255 }
+        local lit = period == "NITE"
+          and y[1] > x[1] + 1 / 31 and y[1] >= y[3]
+        if not lit then
+          pairs_ = pairs_ + 1
+          for r = 1, 4 do
+            for c = 1, 4 do ata[r][c] = ata[r][c] + x[r] * x[c] end
+            for ch = 1, 3 do aty[ch][r] = aty[ch][r] + x[r] * y[ch] end
+          end
+        end
+      end
+    end
+  end
+  if pairs_ < 8 then return nil end
+  local rows = {}
+  for ch = 1, 3 do
+    local w = solve4(ata, aty[ch])
+    if not w then return nil end
+    rows[ch] = w
+  end
+  return {
+    r = { rows[1][1], rows[1][2], rows[1][3] },
+    g = { rows[2][1], rows[2][2], rows[2][3] },
+    b = { rows[3][1], rows[3][2], rows[3][3] },
+    bias = { rows[1][4], rows[2][4], rows[3][4] },
+  }
+end
+
+local function applyTransform(tf, r, g, b)
+  local function ch(row, bias)
+    local v = row[1] * r + row[2] * g + row[3] * b + bias
+    return math.max(0, math.min(1, v))
+  end
+  return ch(tf.r, tf.bias[1]), ch(tf.g, tf.bias[2]), ch(tf.b, tf.bias[3])
+end
+
+local DAYTIME_GLSL = [[
+extern vec3 rowR;
+extern vec3 rowG;
+extern vec3 rowB;
+extern vec3 offset;
+vec4 effect(vec4 color, Image tex, vec2 tc, vec2 sc) {
+  vec4 px = Texel(tex, tc);
+  vec3 rgb = vec3(dot(rowR, px.rgb), dot(rowG, px.rgb), dot(rowB, px.rgb))
+    + offset;
+  return vec4(clamp(rgb, 0.0, 1.0), px.a) * color;
+}
+]]
+
+-- Built once, on an update rather than in a draw, and false for good on a
+-- host that cannot compile it -- the tint then goes through setColor.
+local daytimeShader = nil
+local function ensureDaytimeShader()
+  if daytimeShader ~= nil then return daytimeShader or nil end
+  daytimeShader = false
+  local g = love and love.graphics
+  if not (g and type(g.newShader) == "function") then return nil end
+  local ok, shader = pcall(g.newShader, DAYTIME_GLSL)
+  if ok and shader then daytimeShader = shader end
+  return daytimeShader or nil
+end
+
+-- Per map environment, roof group and period: the fit reads the live map's
+-- palettes, and those change only with those three.
+local daytimeFits = {}
+
+-- The transform this battle's backdrop should be drawn through, or nil for
+-- the picture as authored.  Gold only, TIME OF DAY on, outdoors.
+local function daytimeTint(battle, place)
+  if not gen2() or mod.options:get("daytime") == false then return nil end
+  if not (place and OUTDOOR_PLACE[place]) then return nil end
+  local world = gen2World(battle)
+  local period = world and world.daytime
+  if period ~= "NITE" and period ~= "MORN" then return nil end
+  local def = world.map and world.map.def
+  local key = tostring(def and def.environment) .. "|"
+    .. tostring(def and def.group) .. "|" .. period
+  local fit = daytimeFits[key]
+  if fit == nil then
+    fit = false
+    local okP, Palettes = pcall(require, "src.world.gen2.Palettes")
+    if okP and type(Palettes) == "table" and type(Palettes.bgSet) == "function"
+        and world.palettes then
+      local okD, daySet = pcall(Palettes.bgSet, world.palettes, def, "DAY")
+      local okO, otherSet = pcall(Palettes.bgSet, world.palettes, def, period)
+      if okD and okO then fit = fitDaytime(daySet, otherSet, period) or false end
+    end
+    fit = fit or DAYTIME_FALLBACK[period] or false
+    daytimeFits[key] = fit
+  end
+  return fit or nil
+end
+
+-- The transform for THIS frame's picture, set by the Gen 2 arm before it
+-- paints and kept for the bars at the end of the same frame.
+local pendingTint, bleedTint = nil, nil
+
+-- Draw the picture through the period's transform, or through no shader at
+-- all when there is none -- the same guard `withoutShader` is, plus the tint.
+local function paintPicture(tint, draw)
+  if not tint then return withoutShader(draw) end
+  local g = love.graphics
+  local had = g.getShader and g.getShader() or nil
+  local shader = ensureDaytimeShader()
+  if shader then
+    local okSend = pcall(function()
+      shader:send("rowR", tint.r)
+      shader:send("rowG", tint.g)
+      shader:send("rowB", tint.b)
+      shader:send("offset", tint.bias)
+    end)
+    if not okSend then shader = nil end
+  end
+  if shader then
+    g.setShader(shader)
+  else
+    if had then g.setShader() end
+    local r, gg, b = applyTransform(tint, 1, 1, 1)
+    pictureColor = { r, gg, b }
+  end
+  local ok, err = pcall(draw)
+  pictureColor = WHITE
+  g.setShader(had)
+  if not ok then error(err, 0) end
+end
+
+mod.exports.arenaFitDaytime = fitDaytime
+mod.exports.arenaDaytimeTint = daytimeTint
+mod.exports.arenaApplyTransform = applyTransform
+mod.exports.arenaDaytimeFallback = DAYTIME_FALLBACK
+
 local function paintField()
   if devOption("field_test") then
     love.graphics.setColor(1, 0, 1, 1)
@@ -1142,7 +1516,7 @@ local function paintField()
     love.graphics.setColor(1, 1, 1, 1)
     return
   end
-  withoutShader(function()
+  paintPicture(pendingTint, function()
     drawCover(pendingImage, pendingW, pendingH)
   end)
 end
@@ -1519,15 +1893,52 @@ local function artLayout(layout)
   return wantsWideArt() and "wide" or "og"
 end
 
+-- ------- BATTLE BG = WORLD, on Gold
+--
+-- Reported as *"with the mod enabled, the background is always black"*, beside
+-- a screenshot of the same phone with the mod off and the overworld showing
+-- all round the battle.  That player had BATTLE BG set to WORLD.
+--
+-- Red tells this mod about WORLD in the letterbox payload: its battle goes
+-- non-opaque, the world pass runs, and `render.letterbox` arrives once with
+-- `worldActive` set -- which `bleedInto` has always stood down on.  Gold raises
+-- the hook TWICE on a WORLD frame (src/core/Game2.lua, `drawScene`): once with
+-- `worldActive = true` before `world:draw()`, and again with `worldActive =
+-- false` after the battle -- and that second call is the one that comes after
+-- the battle drew and so is the one holding a picture.  So on Gold the test
+-- never fired, and 0.34.0's "the bars stop where the picture does" painted
+-- the letterbox colour over the world wherever the picture could not reach.
+-- On a portrait phone that is everything under the battle.
+--
+-- So the question is put to the battle itself, which is where the engine
+-- keeps the answer: `BattleState:bgMode()` is what Game2 asks to decide
+-- whether to draw the world at all.
+local function surroundIsWorld(state)
+  if not gen2() or type(state) ~= "table" then return false end
+  if type(state.bgMode) ~= "function" then return false end
+  local ok, mode = pcall(state.bgMode, state)
+  return ok and mode == "world"
+end
+
+mod.exports.arenaSurroundIsWorld = surroundIsWorld
+
 local function bleedInto(view)
   local img = bleedImage
-  local panel = bleedPanel
+  local panel, world = bleedPanel, bleedWorld
+  local tint = bleedTint
+  bleedTint = nil
   -- Claimed, not read: the hook runs once per frame after the battle drew,
   -- and a frame with no battle draw in it must not inherit the last one's
   -- picture.  Clearing on the way past is what makes that true without a
   -- frame counter.
-  bleedImage, bleedPanel = nil, nil
+  bleedImage, bleedPanel, bleedWorld = nil, nil, false
   if not img then return end
+  -- BATTLE BG = WORLD on Gold.  The overworld is already drawn round the
+  -- battle and dimmed by the engine, and that is what the player asked to
+  -- see there -- so the bars are left to it, exactly as the `worldActive`
+  -- test below leaves them on Red.  Asked of the battle rather than of the
+  -- payload because Gold's payload cannot say: see `surroundIsWorld`.
+  if world then return end
   -- The rectangle this whole file is about.  `panelRect` asked the engine
   -- where the battle really went; the payload only knows where a classic
   -- panel would have gone.  Everything else in the payload -- the window,
@@ -1590,16 +2001,21 @@ local function bleedInto(view)
       realRectangle("fill", r.x, r.y, r.w, r.h)
     end
     g.setColor(1, 1, 1, 1)
-    -- Then the picture, at the SURFACE's scale and the surface's alignment, so
-    -- the bars and the field are one continuous photograph with no seam.
-    -- Through no shader, for the reason under paintField: this is the same
-    -- picture, and bars in four greys beside a field in colour would be worse
-    -- than either.
+  end)
+  -- Then the picture, at the SURFACE's scale and the surface's alignment, so
+  -- the bars and the field are one continuous photograph with no seam.
+  -- Through no palette shader, for the reason under paintField: this is the
+  -- same picture, and bars in four greys beside a field in colour would be
+  -- worse than either -- and through the same TIME OF DAY as the field, or the
+  -- seam comes back as a day picture round a night one.
+  paintPicture(tint, function()
+    local c = pictureColor
+    g.setColor(c[1], c[2], c[3], 1)
     for i in ipairs(rects) do
       local quad, at = cut.quads[i], cut.at and cut.at[i]
       if quad and at then g.draw(img, quad, at.x, at.y, 0, sx, sy) end
     end
-
+    g.setColor(1, 1, 1, 1)
   end)
 end
 
@@ -1648,6 +2064,8 @@ mod.exports.gen2SlotFile = GEN2_SLOT_FILE
 mod.exports.gen2BossClass = BOSS_CLASS_GEN2
 mod.exports.gen2Ocean = OCEAN_LANDMARK_GEN2
 mod.exports.gen2MapSlots = MAP_SLOT_GEN2
+mod.exports.gen2FishWater = fishWater
+mod.exports.gen2WaterIsSea = waterIsSeaGen2
 
 -- ------------------------------------------------------- the paper behind
 
@@ -1721,12 +2139,79 @@ local PAPER_MIN_SIDE = 8
 
 local paperBox = setmetatable({}, { __mode = "k" })
 
--- The pic's pixels, read back off a scratch canvas.  LOVE hands out no way to
--- read an Image directly, and the mod never sees the path the engine loaded
--- it from, so the picture has to be drawn to be looked at.  "replace" so the
--- alpha arrives exactly as the pic carries it rather than blended.
+-- ------- where a pic came FROM, so it can be read off the disk
+--
+-- Reading a pic back off the GPU is a full pipeline flush: the driver has to
+-- finish every draw queued ahead of it before it can hand pixels back.  On a
+-- desktop that is invisible.  On a handheld GPU it is a stall you can see,
+-- and the battle intro is where every one of them landed -- "there is some
+-- lag in the animation that switches from world view to battle view, not
+-- when encountering a wild pokemon but when engaging into a trainer battle".
+-- A trainer battle is the one with a trainer's pic in it, which is one more
+-- picture to measure for its paper and one more to cut out of its square.
+--
+-- Gold loads every battle pic from a file, and keeps the path: the trainer's
+-- is `enemyTrainerPath`, the player's back pic `playerBackPath`, and every
+-- mon's is the key it is cached under in `picCache` (src/ui/gen2/
+-- BattleState.lua).  `Assets.imageData` reads the same file as pixels, on the
+-- CPU, with no GPU in it.  So the pic shim notes where each image it is
+-- handed came from, and a pic with a known file is read from the file.
+-- Red's pics are coloured in code (BattleState:picImage) and have no file;
+-- those are still read back, but never inside a draw any more (see the queue
+-- below `cutoutFor`).
+local picPaths = setmetatable({}, { __mode = "k" })
+
+local function notePicPath(state, image)
+  if type(state) ~= "table" or image == nil or picPaths[image] then return end
+  local path
+  if image == rawget(state, "enemyTrainerImage") then
+    path = rawget(state, "enemyTrainerPath")
+  elseif image == rawget(state, "playerBackImage") then
+    path = rawget(state, "playerBackPath")
+  else
+    local cache = rawget(state, "picCache")
+    if type(cache) == "table" then
+      for key, cached in pairs(cache) do
+        if cached == image then path = key break end
+      end
+    end
+  end
+  if type(path) == "string" then picPaths[image] = path end
+end
+
+mod.exports.arenaPicPath = function(image) return picPaths[image] end
+mod.exports.arenaNotePicPath = notePicPath
+
+local function readFromFile(img, w, h)
+  local path = picPaths[img]
+  if not path then return nil end
+  local okA, Assets = pcall(require, "src.render.Assets")
+  if not (okA and type(Assets) == "table"
+          and type(Assets.imageData) == "function") then
+    return nil
+  end
+  local ok, data = pcall(Assets.imageData, path)
+  if not (ok and data and type(data.getDimensions) == "function") then
+    return nil
+  end
+  local okDim, dw, dh = pcall(data.getDimensions, data)
+  -- The file is the picture only if it is the picture's size: a mod that
+  -- swaps the art in the texture and not on disk is read back instead.
+  if not okDim or dw ~= w or dh ~= h then return nil end
+  return data
+end
+
+-- One scratch canvas per pic size, kept: a readback used to allocate a fresh
+-- canvas every time, which is a texture made and thrown away per picture.
+local scratch = {}
+
+-- The pic's pixels: off its file when the file is known, otherwise read back
+-- off a scratch canvas.  "replace" so the alpha arrives exactly as the pic
+-- carries it rather than blended.
 local function readPic(img)
   local w, h = img:getDimensions()
+  local fromFile = readFromFile(img, w, h)
+  if fromFile then return fromFile end
   -- DPISCALE IS LOAD-BEARING.  love.graphics.newCanvas(w, h) takes the
   -- window's DPI scale unless it is told otherwise, so on a phone at scale 3
   -- a 56x56 request is a 168x168 canvas, the pic is drawn into it three times
@@ -1740,8 +2225,13 @@ local function readPic(img)
   -- Pinned here, and the measurement checks what actually came back as well,
   -- so a host that ignores the request is measured correctly rather than
   -- measured wrong.
-  local ok, pinned = pcall(love.graphics.newCanvas, w, h, { dpiscale = 1 })
-  local canvas = (ok and pinned) or love.graphics.newCanvas(w, h)
+  local size = w .. "x" .. h
+  local canvas = scratch[size]
+  if not canvas then
+    local ok, pinned = pcall(love.graphics.newCanvas, w, h, { dpiscale = 1 })
+    canvas = (ok and pinned) or love.graphics.newCanvas(w, h)
+    scratch[size] = canvas
+  end
   local prevCanvas = love.graphics.getCanvas()
   -- push("all") carries the colour, blend mode, shader and scissor; the canvas
   -- is not part of that state, so it is saved and put back by hand.
@@ -2072,6 +2562,10 @@ end
 -- paper uses.
 local cutoutImage = setmetatable({}, { __mode = "k" })
 
+-- Back pics: the frame cuts the figure off at the bottom.  Set by the draw
+-- shim, which knows which side it is drawing; read by `buildCutout`.
+local framedBelow = setmetatable({}, { __mode = "k" })
+
 local function buildCutout(img)
   if not (love.image and type(love.image.newImageData) == "function") then
     return false
@@ -2164,8 +2658,39 @@ local function buildCutout(img)
     outside[key] = true
     qx[#qx + 1], qy[#qy + 1] = x, y
   end
-  for x = 0, w - 1 do push(x, 0); push(x, h - 1) end
-  for y = 0, h - 1 do push(0, y); push(w - 1, y) end
+  -- ------- and where the FRAME closes the figure: a back pic's bottom edge
+  --
+  -- "There are sprites where white areas are being ignored and/or cropped
+  -- incorrectly."  The flood starts from every field pixel on the border,
+  -- and a back pic -- the player's own -- is cut off by its frame at the
+  -- bottom: the body carries on below it.  So a white shirt that reaches the
+  -- bottom edge is field-coloured AND on the border, the flood poured in
+  -- through it, and the backdrop showed through Kris's back.
+  --
+  -- On that one edge a border pixel is OUTSIDE only if it lies past the
+  -- figure, which is the paper arm's rule.  Not on the other three, and not
+  -- on a front pic at all: a trainer facing you stands on the bottom edge,
+  -- and the field between two feet that reach it IS outside.  The first
+  -- version of this used the span on every edge of every pic, and over
+  -- Crystal's 67 trainer pics that kept the white between the legs of the
+  -- Lass, Picnicker, Biker, Bruno and Red (and five more) while fixing only
+  -- Kris's back -- which this narrower rule fixes pixel for pixel the same.
+  local function seedRow(y, closed)
+    local first, last
+    if closed then
+      first, last = edgeSpan(w, function(x) return opaque[y * w + x] end)
+    end
+    for x = 0, w - 1 do
+      if not first or x < first or x > last then push(x, y) end
+    end
+  end
+  local function seedColumn(x)
+    for y = 0, h - 1 do push(x, y) end
+  end
+  seedRow(0)
+  seedRow(h - 1, framedBelow[img] == true)
+  seedColumn(0)
+  seedColumn(w - 1)
   while head <= #qx do
     local x, y = qx[head], qy[head]
     head = head + 1
@@ -2227,7 +2752,8 @@ end
 -- the exact moment the intro is sliding.
 local cutoutWanted, cutoutQueue = setmetatable({}, { __mode = "k" }), {}
 
-local function cutoutFor(img)
+local function cutoutFor(img, back)
+  if back then framedBelow[img] = true end
   local hit = cutoutImage[img]
   if hit ~= nil then return hit or nil end
   if not cutoutWanted[img] then
@@ -2242,7 +2768,8 @@ end
 -- the figure -- and getting it wrong cuts a hole in a picture.  This is the
 -- BUILD, and calling it is what the update below does; the draw calls
 -- `cutoutFor` instead and never reaches here.
-local function picCutoutImage(img)
+local function picCutoutImage(img, back)
+  if back then framedBelow[img] = true end
   if cutoutImage[img] == nil then
     local ok, built = pcall(buildCutout, img)
     cutoutImage[img] = (ok and built) or false
@@ -2253,14 +2780,63 @@ local function picCutoutImage(img)
   return cutoutImage[img] or nil
 end
 
--- Called from `core.update`.  Returns the image it built, or nil when there
--- was nothing waiting -- which is what the test drives.
+-- ------- the paper, asked in the draw and built between frames too
+--
+-- MON PAPER used to be built where it was first wanted: inside `drawPic` on
+-- Gold and `drawBattlerPic` on Red, with the battle's canvas bound -- a
+-- readback, a scratch canvas made for it, and on Gold a new texture, on the
+-- first frame each pic was on screen.  That is the same mid-draw work the
+-- cut-out was moved out of in 0.32.65, and on a handheld it is the stutter at
+-- the start of a battle.  It is a cache read now, with the same queue: the
+-- first frame a pic is on screen it stands without its paper, and from the
+-- next one it has it.
+local paperWanted, paperQueue = setmetatable({}, { __mode = "k" }), {}
+
+local function want(kind, img)
+  local key = paperWanted[img]
+  if key and key[kind] then return end
+  key = key or {}
+  key[kind] = true
+  paperWanted[img] = key
+  paperQueue[#paperQueue + 1] = { kind = kind, img = img }
+end
+
+local picPaperImage
+
+local function paperFor(img)
+  local hit = paperImage[img]
+  if hit ~= nil then return hit or nil end
+  want("image", img)
+  return nil
+end
+
+local function paperBoxFor(img)
+  local hit = paperBox[img]
+  if hit ~= nil then return hit or nil end
+  want("box", img)
+  return nil
+end
+
+-- Called from `core.update`: ONE picture per call, cut-outs first.  Returns
+-- the image it built for, or nil when there was nothing waiting -- which is
+-- what the tests drive.
 local function buildQueuedCutouts()
   local img = table.remove(cutoutQueue, 1)
-  if not img then return nil end
-  cutoutWanted[img] = nil
-  picCutoutImage(img)
-  return img
+  if img then
+    cutoutWanted[img] = nil
+    picCutoutImage(img)
+    return img
+  end
+  local job = table.remove(paperQueue, 1)
+  if not job then return nil end
+  local wanted = paperWanted[job.img]
+  if wanted then wanted[job.kind] = nil end
+  if job.kind == "box" then
+    picPaperBox(job.img)
+  else
+    picPaperImage(job.img)
+  end
+  return job.img
 end
 
 mod.exports.picCutoutImage = picCutoutImage
@@ -2270,11 +2846,68 @@ mod.exports.picCutoutImage = picCutoutImage
 mod.exports.cutoutFor = cutoutFor
 mod.exports.buildQueuedCutouts = buildQueuedCutouts
 mod.exports.cutoutQueued = function() return #cutoutQueue end
+mod.exports.paperQueued = function() return #paperQueue end
+
+-- ------- the backdrops a map may need, loaded before a battle needs them
+--
+-- A backdrop is decoded the first time a battle asks for it, which is the
+-- first frame of that battle -- and a trainer battle asks for its own scene
+-- (`trainer_town`, `trainer_field`, a gym's) as well as walking the wild
+-- chain, so the first trainer in each new place paid for files the wild
+-- battles there never touched.  On a handheld that is the stutter at the
+-- start of the fight.
+--
+-- So on entering a map, the scenes its battles would pick are loaded ahead,
+-- ONE PER UPDATE and only on updates with nothing owed to a pic: a wild
+-- battle, a trainer battle, and water, each walked through the same
+-- `pickBackdrop` a battle walks -- so what is loaded is exactly what will be
+-- asked for, and a slot with no file costs its failed lookup now rather than
+-- in the intro.  The art in use is cached the way it always was; this only
+-- moves WHEN the decode happens.
+--
+-- `prewarmJobs` is nil when there is nothing to do, false when a map was
+-- just entered and the list has not been built, and a list while it drains.
+local PREWARM_KINDS = { "wild", "trainer", "surf" }
+
+local prewarmJobs = nil
+
+local function prewarmBattle(game)
+  if gen2() then
+    return { game = game, battle = { wild = true } }
+  end
+  return { game = game }
+end
+
+local function prewarmStep(game)
+  if prewarmJobs == nil then return false end
+  if mod.options:get("enabled") == false or not game then
+    prewarmJobs = nil
+    return false
+  end
+  if prewarmJobs == false then
+    prewarmJobs = {}
+    for _, kind in ipairs(PREWARM_KINDS) do
+      prewarmJobs[#prewarmJobs + 1] = kind
+    end
+    return true
+  end
+  local kind = table.remove(prewarmJobs, 1)
+  if not kind then
+    prewarmJobs = nil
+    return false
+  end
+  pickBackdrop(prewarmBattle(game), artLayout("og"), kind)
+  return true
+end
+
+mod.exports.arenaPrewarmStep = function(game) return prewarmStep(game) end
+mod.exports.arenaPrewarmPending = function() return prewarmJobs end
+mod.exports.paperFor = function(img) return paperFor(img) end
 
 -- Exposed for the headless suite the same way picPaperBox is: it is a pure
 -- question about one image -- which pixels of it are a hole through the mon
 -- -- and getting it wrong paints over a picture.
-local function picPaperImage(img)
+function picPaperImage(img)
   if paperImage[img] == nil then
     local ok, built = pcall(buildPaperImage, img)
     paperImage[img] = (ok and built) or false
@@ -2315,7 +2948,8 @@ end
 local function drawPicPaper(battle, battler, x, y, scale)
   local img = battle:picImage(battler.sprite)
   if not img then return end
-  local box = picPaperBox(img)
+  -- A cache read: built on the next update, never in this draw.
+  local box = paperBoxFor(img)
   if not box then return end
   local r, g, b, a = love.graphics.getColor()
   love.graphics.setColor(1, 1, 1, a)
@@ -2699,6 +3333,119 @@ local function installGen2()
   unpapered("drawEnemyHud")
   unpapered("drawPlayerHud")
 
+  -- ------- CLEAR BOXES: the boxes' own paper, see-through
+  --
+  -- "Consider adding option to enable the white background for text/UI in a
+  -- transparent mode -- full white can be a bit aggressive on the colored
+  -- battle background ... a menu option that switches between 0-100%
+  -- transparency with steps of 10%."
+  --
+  -- CLEAR HUD took the paper away from the HUD outright, because the HUD has
+  -- no box and its paper was only ever the tilemap showing.  The bottom strip
+  -- IS a box -- the message box, the command and move menus, the YES/NO --
+  -- and a box with no paper at all is ink on a photograph, which is legible on
+  -- some backdrops and not on others.  So this is a dial rather than a switch:
+  -- the box keeps its border, its ink and its paper, and the paper is laid at
+  -- the strength the player picks.
+  --
+  -- Every box Gold draws goes through `Chrome.paletteBox`, and the paper is
+  -- the one `rectangle("fill")` in it; the palette shader multiplies by the
+  -- draw colour (`vec4(mapped, px.a) * tint`), so an alpha on that fill
+  -- survives the remap with the theme's own colour.  The paper cell every
+  -- string and every cursor paints under itself is dropped outright while a
+  -- box is see-through, because the box under it is already its paper and a
+  -- second translucent layer would print a band behind every line.
+  --
+  -- Only while a backdrop is up, like everything else in this arm: on Gold's
+  -- own white field there is nothing behind a box to see.
+  --
+  -- And only the BOTTOM STRIP -- the message box and the command and move
+  -- menus, every one of which sits on the field and nothing else.  Gold also
+  -- draws boxes OVER the HUD and the pics: the move's type and PP over the
+  -- player's back (box 0,8), the YES/NO over the player's HUD (box 14,7), the
+  -- level-up stats down the right (textbox 9,0).  On the cart each of those
+  -- hides what is under it, and made see-through they printed their text
+  -- across the HUD numbers and the mon.  They keep their paper.
+  --
+  -- The strip's boxes NEST: the command menu (8,12) and the move list (4,12)
+  -- are drawn inside the full-width message box (0,12).  Paper laid twice is
+  -- twice as opaque, so a strip read 50% on the left and 75% on the right.
+  -- A box inside one already cleared this frame lays no paper of its own --
+  -- the one under it is its paper.  Rects are kept in tiles and emptied at
+  -- the top of every battle draw.
+  local STRIP_TOP = 12
+  local cleared = {}
+
+  local function boxAlpha()
+    if not (active and consumed) then return nil end
+    local clear = tonumber(mod.options:get("box_clear")) or 0
+    if clear <= 0 then return nil end
+    return math.max(0, 1 - math.min(100, clear) / 100)
+  end
+
+  local function insideCleared(x1, y1, x2, y2)
+    for _, r in ipairs(cleared) do
+      if x1 >= r[1] and y1 >= r[2] and x2 <= r[3] and y2 <= r[4] then
+        return true
+      end
+    end
+    return false
+  end
+
+  local function translucentFills(alpha, base, ...)
+    local realRect = love.graphics.rectangle
+    love.graphics.rectangle = function(mode, x, y, w, h, ...)
+      if mode ~= "fill" then return realRect(mode, x, y, w, h, ...) end
+      if alpha <= 0 then return end
+      local r, g, b, a = love.graphics.getColor()
+      love.graphics.setColor(r, g, b, (a or 1) * alpha)
+      realRect(mode, x, y, w, h, ...)
+      love.graphics.setColor(r, g, b, a)
+    end
+    local ok, result = pcall(base, ...)
+    love.graphics.rectangle = realRect
+    if not ok then error(result, 0) end
+    return result
+  end
+
+  local basePaletteBox = Chrome.paletteBox
+  if type(basePaletteBox) == "function" then
+    Chrome.paletteBox = function(tx, ty, tw, th, ...)
+      local alpha = boxAlpha()
+      tx, ty, tw, th = tonumber(tx), tonumber(ty), tonumber(tw), tonumber(th)
+      if not (alpha and tx and ty and tw and th) or ty < STRIP_TOP then
+        return basePaletteBox(tx, ty, tw, th, ...)
+      end
+      local x2, y2 = tx + tw - 1, ty + th - 1
+      if insideCleared(tx, ty, x2, y2) then
+        return translucentFills(0, basePaletteBox, tx, ty, tw, th, ...)
+      end
+      cleared[#cleared + 1] = { tx, ty, x2, y2 }
+      return translucentFills(alpha, basePaletteBox, tx, ty, tw, th, ...)
+    end
+  else
+    mod.log:warn("src.ui.gen2.Chrome has no paletteBox; CLEAR BOXES has "
+      .. "nothing to reach")
+  end
+
+  -- A cell's own paper goes only where a see-through box is already its
+  -- paper.  A string on the HUD, or in a box that kept its paper, keeps its
+  -- cell -- which is what CLEAR HUD = OFF asks for.
+  local function inCleared(tx, ty)
+    tx, ty = tonumber(tx), tonumber(ty)
+    return tx ~= nil and ty ~= nil and insideCleared(tx, ty, tx, ty)
+  end
+
+  local baseCursor = Chrome.cursorThrough
+  if type(baseCursor) == "function" then
+    Chrome.cursorThrough = function(tx, ty, ...)
+      if keying or not boxAlpha() or not inCleared(tx, ty) then
+        return baseCursor(tx, ty, ...)
+      end
+      return translucentFills(0, baseCursor, tx, ty, ...)
+    end
+  end
+
   -- ------- the text's paper cell
   --
   -- Swallowed by shimming the fill for the length of the call rather than by
@@ -2717,7 +3464,16 @@ local function installGen2()
       -- cart's own numbers in place of the themed ones, for the reason under
       -- CART_PALETTE.
       Chrome[name] = function(text, a, b, palette, ...)
-        if not keying then return base(text, a, b, palette, ...) end
+        if not keying then
+          -- CLEAR BOXES: inside a see-through box the string's own paper
+          -- cell goes, its ink is the box's.  `a` is the first column of a
+          -- printThrough and the last of a printRightThrough; either is in
+          -- the box the line is printed in.  See `boxAlpha`.
+          if boxAlpha() and inCleared(a, b) then
+            return translucentFills(0, base, text, a, b, palette, ...)
+          end
+          return base(text, a, b, palette, ...)
+        end
         local realRect = love.graphics.rectangle
         love.graphics.rectangle = function() end
         local ok, width = pcall(base, text, a, b, CART_PALETTE, ...)
@@ -2879,9 +3635,13 @@ local function installGen2()
           love.graphics.draw = shim
           return realDraw(image, first, ...)
         end
+        -- Where this picture came from, so the build can read it off the
+        -- disk rather than off the GPU.  See `notePicPath`.
+        notePicPath(self, image)
         local cut = trainerPic and mod.options:get("pic_cutout") ~= false
-          and cutoutFor(image) or nil
-        local paper = (not cut) and picPaperImage(image) or nil
+          and cutoutFor(image, back) or nil
+        -- A cache read too, the same as the cut-out: see `paperFor`.
+        local paper = (not cut) and paperFor(image) or nil
         love.graphics.draw = shim
         -- Through whatever the engine has bound for this pic, so the paper is
         -- the mon's own colour 0 -- deliberately NOT the page's paper, which
@@ -2939,7 +3699,15 @@ local function installGen2()
     end
 
     active, consumed = true, true
+    -- CLEAR BOXES: no box has been cleared on this frame yet.
+    for i = #cleared, 1, -1 do cleared[i] = nil end
     pendingImage, pendingW, pendingH = chosen, width, height
+    -- TIME OF DAY: the place this battle is in decides whether the clock
+    -- reaches the picture at all.  See `daytimeTint`.
+    local okTint, tint = pcall(function()
+      return daytimeTint(self, tilesetSlot(self))
+    end)
+    pendingTint = okTint and tint or nil
 
     -- Down FIRST, on the surface the scene composites onto, so an attack's
     -- scanline scroll moves the panel over it instead of moving it.
@@ -2952,10 +3720,12 @@ local function installGen2()
     end
 
     bleedImage, bleedW, bleedH = chosen, width, height
+    bleedTint = pendingTint
     -- Where the engine is about to put that surface, asked of the engine
     -- while the live battle is in hand.  See `panelRect`: the letterbox
     -- payload describes a classic panel and this one does not.
     bleedPanel = panelRect(self, width, height)
+    bleedWorld = surroundIsWorld(self)
     lastPanel = bleedPanel
     -- What UI THEME needs to know about this frame, on the instance rather
     -- than through an export, because it is a fact about ONE battle screen
@@ -2971,7 +3741,8 @@ local function installGen2()
     self.gen1wildArenaField = true
 
     local okDraw, err = pcall(baseScene, self, bodyFn, ...)
-    active, consumed, pendingImage = false, false, nil
+    active, consumed, pendingImage, pendingTint = false, false, nil, nil
+    for i = #cleared, 1, -1 do cleared[i] = nil end
     if not okDraw then error(err, 0) end
   end
 
@@ -3086,6 +3857,19 @@ local optionRows = {
 if gen2() then
   optionRows[#optionRows + 1] =
     { key = "hud_clear", type = "toggle", label = "CLEAR HUD", default = true }
+  -- The clock reaches the picture: a battle outdoors after sunset is fought
+  -- against the backdrop as Gold paints the world at night, and in the
+  -- morning against its warmer morning.  See `daytimeTint`.  Live: read on
+  -- every frame, so it takes no relaunch.
+  optionRows[#optionRows + 1] =
+    { key = "daytime", type = "toggle", label = "TIME OF DAY", default = true }
+  -- How much of the battle's boxes' paper the backdrop shows through: OFF is
+  -- the cart's solid boxes, 100% is border and ink on the picture.  Live.
+  -- See `boxAlpha`.
+  local clearSteps = { { "OFF", 0 } }
+  for pct = 10, 100, 10 do clearSteps[#clearSteps + 1] = { pct .. "%", pct } end
+  optionRows[#optionRows + 1] = { key = "box_clear", type = "choice",
+    label = "CLEAR BOXES", default = 0, choices = clearSteps }
 end
 
 if DEV then
@@ -3237,14 +4021,41 @@ end
 -- cut-out and nothing else -- the pic that could not be cut is drawn as the
 -- cart drew it, square and all.
 mod.hooks:wrap("core.update", function(nextLink, game, dt)
-  if mod.options:get("pic_cutout") ~= false then
-    local ok, problem = pcall(buildQueuedCutouts)
-    if not ok then
-      mod.log:warn("a pic could not be cut from its square: %s",
-                   tostring(problem))
+  -- TIME OF DAY's shader, compiled between frames the first time there is a
+  -- Gold boot to want it; one attempt, and nothing after it either way.
+  if daytimeShader == nil and gen2() and mod.options:get("daytime") ~= false then
+    pcall(ensureDaytimeShader)
+  end
+  -- Whatever a draw asked for -- a cut-out, a pic's paper -- up to two per
+  -- update: a battle has two sides, and the frame a battle's pics first
+  -- appear in queues both, so both have what they asked for by the next
+  -- frame rather than the player's a frame after the enemy's.  Not behind
+  -- PIC CUTOUT any more, because the paper rides the same queue and is its
+  -- own row; a queue nothing asked for costs two table reads.
+  local ok, problem = pcall(buildQueuedCutouts)
+  if ok and problem then
+    local okMore, more = pcall(buildQueuedCutouts)
+    if not okMore then ok, problem = false, more end
+  end
+  if not ok then
+    mod.log:warn("a pic could not be cut from its square: %s",
+                 tostring(problem))
+  elseif not problem then
+    -- Nothing owed to a pic this frame, so the frame is free for the next
+    -- backdrop this map may need.  See `prewarmStep`.
+    local okWarm, warmProblem = pcall(prewarmStep, game)
+    if not okWarm then
+      prewarmJobs = nil
+      mod.log:warn("backdrops were not loaded ahead: %s", tostring(warmProblem))
     end
   end
   return nextLink(game, dt)
+end)
+
+mod.events:on("map.entered", function()
+  -- A new map is the moment to start: see `prewarmStep`.  The jobs are made
+  -- on the next update, where the world has finished arriving.
+  prewarmJobs = false
 end)
 
 mod.hooks:wrap("render.letterbox", function(nextLink, view)

@@ -1,11 +1,12 @@
 {
   "id": "gen1arena",
   "name": "Gen1Arena",
-  "version": "0.36.0",
+  "version": "0.37.0",
   "api": 2,
   "games": [
     "gen1",
-    "gen2"
+    "gen2",
+    "gen3"
   ],
   "entry": "main.lua",
   "profile": "content",
@@ -19,7 +20,7 @@
   "dependencies": [],
   "optional_dependencies": [],
   "conflicts": [],
-  "description": "2D image backdrops behind battles, chosen by map, tileset and encounter kind. Supports the OG 160x144 and WIDE 304x144 layouts. Purely presentational.",
+  "description": "2D image backdrops behind battles, chosen by map, tileset and encounter kind. Supports the OG 160x144 and WIDE 304x144 layouts on Red, Blue, Yellow, Gold, Silver and Crystal, follows Gold's time of day, and on FireRed, LeafGreen and Emerald puts the art back on the GBA battle field it was drawn for. Purely presentational.",
   "author": "Wild",
   "github": "wild1walker/Gen1Arena"
 }

@@ -311,12 +311,23 @@ check(BattleState.__gen1arena, "the mod patched BattleState")
 
 -- ------------------------------------------------------------------ helpers
 
+-- One frame as the engine runs it: `core.update`, then the draw.  The mod
+-- measures a pic and builds its paper BETWEEN frames, on core.update, rather
+-- than reading the GPU back in the middle of a battle draw -- that mid-draw
+-- readback was the stall at the start of a trainer battle on a handheld.  So
+-- the frame a pic first appears in queues it, and the next frame has it.
+local function tick()
+  local update = defaults["#core.update"]
+  if update then update(function() end, {}, 1 / 60) end
+end
+
 -- Run one battle draw and hand back the fills it laid down, minus the
 -- full-surface field fill the backdrop replaced.
-local function drawWith(sprite, battler)
+local function drawOnce(sprite, battler)
   rects = {}
   local battle = setmetatable(
     { player = battler or { sprite = sprite }, game = {} }, BattleState)
+  tick()
   battle.drawClassic(battle)
   local out = {}
   for _, r in ipairs(rects) do
@@ -327,7 +338,21 @@ local function drawWith(sprite, battler)
   return out, battle
 end
 
+-- The fills of the frame after the one the pic first appeared in: what the
+-- player sees for the rest of the battle.
+local function drawWith(sprite, battler)
+  drawOnce(sprite, battler)
+  return drawOnce(sprite, battler)
+end
+
 -- ------------------------------------------------------------------- tests
+
+do
+  -- Between frames, not inside one: the first frame a pic is seen in has no
+  -- paper yet and does no readback.
+  local first = drawOnce(newPic(HOLLOW_ROWS))
+  eq(#first, 0, "the frame a pic first appears in queues its paper")
+end
 
 do
   -- The case in the report: a pale mon over a backdrop.  Without the paper it
@@ -361,9 +386,9 @@ end
 
 do
   -- The measurement is cached per image, so a second battle costs no readback
-  -- and still lays the paper.
-  local fills = drawWith(HOLLOW)
-  eq(#fills, 1, "the cached measurement still lays paper on the next battle")
+  -- and lays the paper from its very first frame.
+  local fills = drawOnce(HOLLOW)
+  eq(#fills, 1, "the cached measurement lays paper on the next battle's first frame")
 end
 
 do

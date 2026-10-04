@@ -138,8 +138,19 @@ do
   io.write("every full-colour paint in the file is inside the guard\n")
   local src = slurp("main.lua")
 
+  -- `paintPicture` is the guard with TIME OF DAY in it: with no transform it
+  -- IS `withoutShader`, and with one it binds that shader and nothing else --
+  -- never the palette remap this suite is about.
+  local picture = src:match("local function paintPicture%(tint, draw%)\n.-\nend")
+  ok(picture and picture:find("if not tint then return withoutShader(draw) end",
+                              1, true) ~= nil,
+    "paintPicture with no transform is withoutShader")
+  ok(picture and picture:find("g.setShader(had)", 1, true) ~= nil,
+    "and with one it still hands the caller's shader back")
+
   local field = src:match("local function paintField%(%).-\nend")
-  ok(field and field:find("withoutShader", 1, true) ~= nil,
+  ok(field and (field:find("withoutShader", 1, true) ~= nil
+                or field:find("paintPicture", 1, true) ~= nil),
     "the field paint -- the backdrop that replaces the battle's white")
   ok(field and field:find("drawCover", 1, true) ~= nil,
     "...and it is drawCover that it wraps")
@@ -148,8 +159,11 @@ do
   local bleed = src:match("\n(  local r0, g0, b0 = barColor%(%)\n.-\n  end%)\n)")
   ok(bleed ~= nil, "the bleed into the letterbox bars is found")
   ok(bleed and bleed:find("withoutShader", 1, true) ~= nil,
-    "and it is inside the guard too -- bars in four greys beside a field in "
-    .. "colour would be worse than either")
+    "and its flat fill is inside the guard too")
+  local barsPicture = src:match("\n(  paintPicture%(tint, function%(%)\n.-\n  end%)\n)")
+  ok(barsPicture and barsPicture:find("g.draw(img, quad", 1, true) ~= nil,
+    "and the picture it carries into the bars goes through paintPicture -- "
+    .. "bars in four greys beside a field in colour would be worse than either")
 
   -- And the OTHER thing that goes in those bars: the flat fill that replaces
   -- the engine's white surround when EDGE TO EDGE is off.  This one is not a

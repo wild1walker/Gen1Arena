@@ -126,9 +126,39 @@ do
   -- GRAYMON, and no per-tower palette at all -- every INDOOR map shares one
   -- BG set -- so the plain room is the faithful answer and Lavender's
   -- grey-violet on a Johto pagoda is not.
-  eq(slotFor(def({ tileset = "TILESET_TOWER" })), "indoor",
+  eq(slotFor(def({ tileset = "TILESET_TOWER" })), "hall",
      "Sprout Tower and the Tin Tower take the PLAIN interior, not Lavender's "
      .. "mourning palette")
+  eq(SLOT_FILE.hall, "indoor",
+     "...which is `hall`, the 10 Indoors room under a name with no trainer "
+     .. "scene beside it")
+
+  -- "Lighthouse in Gold misses battle background, instead it renders a
+  -- bar/playground."  `indoor`'s TRAINER scene is a counter, a PC and a glass
+  -- door; every battle in the Lighthouse is a trainer battle, so every one of
+  -- them was fought in front of the counter.
+  eq(slotFor(def({ id = "OLIVINE_LIGHTHOUSE_3F",
+                   tileset = "TILESET_LIGHTHOUSE", environment = "DUNGEON" })),
+     "hall", "the Lighthouse is the plain room, for its sailors too")
+  eq(slotFor(def({ id = "FAST_SHIP_B1F", tileset = "TILESET_LIGHTHOUSE" })),
+     "ship", "...and the Fast Ship, on the same tileset, keeps its own")
+  eq(slotFor(def({ id = "DANCE_THEATER",
+                   tileset = "TILESET_TRADITIONAL_HOUSE" })), "hall",
+     "the Kimono Girls dance on tatami, not in front of a counter")
+  eq(slotFor(def({ id = "RADIO_TOWER_3F", tileset = "TILESET_RADIO_TOWER" })),
+     "indoor", "while the Radio Tower is an office and keeps the office")
+
+  -- The three the replay over every Crystal header found in the wrong KIND of
+  -- place (tools/audit_gen2_arena.py).
+  eq(slotFor(def({ id = "LAKE_OF_RAGE", tileset = "TILESET_JOHTO",
+                   environment = "TOWN" })), "field",
+     "the Lake of Rage's grass is grass, not a town plaza")
+  eq(slotFor(def({ id = "TIN_TOWER_ROOF", tileset = "TILESET_TOWER",
+                   environment = "ROUTE" })), "plateau",
+     "Ho-Oh's perch is under the sky, not in a room")
+  eq(slotFor(def({ id = "MOUNT_MOON_SQUARE", tileset = "TILESET_KANTO",
+                   environment = "ROUTE" })), "plateau",
+     "and Mt. Moon Square is rock, not grass")
   eq(slotFor(def({ id = "BURNED_TOWER_B1F", tileset = "TILESET_TOWER" })),
      "cave", "...and the Burned Tower's basement is a collapsed pit")
 
@@ -267,6 +297,45 @@ do
   ok(OCEAN.LANDMARK_CINNABAR_ISLAND, "Kanto's south coast is still sea")
   eq(OCEAN.LANDMARK_LAKE_OF_RAGE, nil, "the Lake of Rage is a lake")
   eq(OCEAN.LANDMARK_ROUTE_32, nil, "and Route 32's river is not the sea")
+  ok(OCEAN.LANDMARK_CHERRYGROVE_CITY, "Cherrygrove's beach faces the sea")
+
+  -- The cart's own answer, which outranks the list: every header carries a
+  -- fishing group, and most of them are named for the water.
+  local fish = mod.exports.gen2FishWater
+  eq(fish("FISHGROUP_OCEAN"), true, "OCEAN is the sea")
+  eq(fish("OCEAN"), true, "with or without the prefix")
+  eq(fish("FISHGROUP_QWILFISH"), true, "Qwilfish live in the sea off Route 32")
+  eq(fish("FISHGROUP_WHIRL_ISLANDS"), true, "and so do the Whirl Islands'")
+  eq(fish("FISHGROUP_POND"), false, "POND is inland")
+  eq(fish("FISHGROUP_GYARADOS"), false, "and so is the Lake of Rage")
+  eq(fish("FISHGROUP_DRATINI_2"), false, "and Route 45's Dratini water")
+  eq(fish("FISHGROUP_SHORE"), nil,
+     "SHORE does not say: it is the coast's AND the header's default, Route "
+     .. "2's inland pond included")
+  eq(fish("FISHGROUP_NONE"), nil, "NONE says nothing either")
+  eq(fish(3), nil, "and a group the engine kept as a number is not guessed at")
+
+  local function waterAt(group, landmark)
+    local world = {
+      map = { def = { fishGroup = group } },
+      currentLandmarkId = function() return landmark end,
+    }
+    return mod.exports.gen2WaterIsSea({ game = { world = world } })
+  end
+  eq(waterAt("FISHGROUP_OCEAN", "LANDMARK_NEW_BARK_TOWN"), true,
+     "New Bark Town's water is the sea -- the list had it as the Lake")
+  eq(waterAt("FISHGROUP_OCEAN", "LANDMARK_ROUTE_26"), true,
+     "and so is Route 26's")
+  eq(waterAt("FISHGROUP_POND", "LANDMARK_ROUTE_28"), false,
+     "Route 28's is a pond -- the list had it as the Sea")
+  eq(waterAt("FISHGROUP_GYARADOS", "LANDMARK_FUCHSIA_CITY"), false,
+     "and Fuchsia's pond is a pond")
+  eq(waterAt("FISHGROUP_SHORE", "LANDMARK_OLIVINE_CITY"), true,
+     "SHORE asks the list, and the list knows Olivine")
+  eq(waterAt("FISHGROUP_SHORE", "LANDMARK_ROUTE_2"), false,
+     "...and that Route 2's pond is not the sea")
+  eq(waterAt(nil, "LANDMARK_CINNABAR_ISLAND"), true,
+     "an engine with no fishing group falls back to the list")
 end
 
 -- ------------------------------------------- every backdrop has a home
