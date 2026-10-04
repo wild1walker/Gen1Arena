@@ -3370,11 +3370,22 @@ local function installGen2()
   -- The strip's boxes NEST: the command menu (8,12) and the move list (4,12)
   -- are drawn inside the full-width message box (0,12).  Paper laid twice is
   -- twice as opaque, so a strip read 50% on the left and 75% on the right.
-  -- A box inside one already cleared this frame lays no paper of its own --
-  -- the one under it is its paper.  Rects are kept in tiles and emptied at
-  -- the top of every battle draw.
+  -- But the inner box's paper is also what HIDES the outer one's text: the
+  -- menu opens over a message that is still up ("the tail of a long name is
+  -- simply covered", drawBottom), and a menu with no paper of its own let
+  -- the tail print through FIGHT and PKMN at full strength.  So a box inside
+  -- one already cleared this frame first puts back what was under the panel
+  -- there -- the backdrop, clipped to the inner box, see `repaintUnder` --
+  -- and then lays its one layer.  The same goes for a string on a cleared
+  -- box's BORDER, which on the cart replaces the border tile: the continue
+  -- arrow at (18,17).  Rects are kept in tiles and emptied at the top of
+  -- every battle draw.
   local STRIP_TOP = 12
   local cleared = {}
+  -- Where this frame's field went down, for `repaintUnder`: the surface it
+  -- was painted on and its corners in that surface's pixels.  Filled in by
+  -- drawScene, one table for the life of the session.
+  local sceneAt = { live = false }
 
   local function boxAlpha()
     if not (active and consumed) then return nil end
@@ -3392,10 +3403,103 @@ local function installGen2()
     return false
   end
 
-  local function translucentFills(alpha, base, ...)
+  -- Where a paper rect, in tiles, sits among this frame's see-through boxes:
+  -- nil in none of them, "border" if it touches the frame of one it is in,
+  -- "inside" otherwise.
+  local function clearedCell(x1, y1, x2, y2)
+    local where = nil
+    for _, r in ipairs(cleared) do
+      if x1 >= r[1] and y1 >= r[2] and x2 <= r[3] and y2 <= r[4] then
+        if x1 == r[1] or y1 == r[2] or x2 == r[3] or y2 == r[4] then
+          return "border"
+        end
+        where = "inside"
+      end
+    end
+    return where
+  end
+
+  -- Put back, inside a rect in the current transform, what was under the
+  -- panel there before the panel was drawn: the backdrop and its veil.  True
+  -- when it could.
+  --
+  -- The field went down in drawScene's transform, and the panel is not
+  -- always drawn in that one -- WideBattle draws the strip under a translate
+  -- of its own -- so the rect is taken to the surface's pixels as a scissor
+  -- and the field is painted again where drawScene painted it.  Under an
+  -- animation the panel is baked into a canvas of its own and laid over the
+  -- surface (BattleAnimView:bake), so the backdrop is already underneath and
+  -- the rect is cleared back to nothing instead.  Anywhere the backdrop never
+  -- reached -- a docked strip below the field -- is not the arena's to put
+  -- back, and the caller falls back to a second layer of paper.
+  local warnedRepaint = false
+  local function repaintUnder(x, y, w, h)
+    local G = love.graphics
+    local at = sceneAt
+    if not (at.live and G.transformPoint and G.intersectScissor and G.push
+            and G.pop and G.origin and G.translate and G.scale) then
+      return false
+    end
+    if not (w > 0 and h > 0) then return true end
+    local paint
+    if G.getCanvas() ~= at.canvas then
+      paint = function()
+        G.setShader()
+        G.setBlendMode("replace")
+        G.setColor(0, 0, 0, 0)
+        realRectangle("fill", x, y, w, h)
+      end
+    else
+      local ax, ay = G.transformPoint(x, y)
+      local bx, by = G.transformPoint(x + w, y + h)
+      local left, right = math.min(ax, bx), math.max(ax, bx)
+      local top, bottom = math.min(ay, by), math.max(ay, by)
+      if left < at.left - 0.5 or top < at.top - 0.5
+         or right > at.right + 0.5 or bottom > at.bottom + 0.5 then
+        return false
+      end
+      -- Rounded the way a fill's edges are: a pixel is in when its centre is.
+      local sx, sy = math.floor(left + 0.5), math.floor(top + 0.5)
+      local sw = math.floor(right + 0.5) - sx
+      local sh = math.floor(bottom + 0.5) - sy
+      if sw <= 0 or sh <= 0 then return true end
+      paint = function()
+        G.intersectScissor(sx, sy, sw, sh)
+        G.origin()
+        G.translate(at.left, at.top)
+        G.scale(at.sx, at.sy)
+        paintField()
+        veilOver(at.scene)
+      end
+    end
+    -- "all": the scissor, the transform, the shader, the blend mode and the
+    -- colour all come back, and they come back even if the paint raises.
+    G.push("all")
+    local ok, err = pcall(paint)
+    G.pop()
+    if not ok then
+      if not warnedRepaint then
+        warnedRepaint = true
+        mod.log:warn("CLEAR BOXES could not repaint under a box: %s",
+          tostring(err))
+      end
+      return false
+    end
+    return true
+  end
+
+  -- `base` with every rectangle("fill") in it -- a box's paper, a string's
+  -- cell, a cursor's cell -- laid at `alpha`.  `pick`, when given, decides
+  -- each one first from its rect: "as is" leaves it alone, "drop" swallows
+  -- it, and "repaint" puts back what is under it before it is laid.
+  local function throughFills(alpha, pick, base, ...)
     local realRect = love.graphics.rectangle
     love.graphics.rectangle = function(mode, x, y, w, h, ...)
       if mode ~= "fill" then return realRect(mode, x, y, w, h, ...) end
+      local how = pick and pick(x, y, w, h)
+      if how == "as is" then return realRect(mode, x, y, w, h, ...) end
+      if how == "drop" then return end
+      if how == "repaint" then repaintUnder(x, y, w, h) end
       if alpha <= 0 then return end
       local r, g, b, a = love.graphics.getColor()
       love.graphics.setColor(r, g, b, (a or 1) * alpha)
@@ -3408,6 +3512,23 @@ local function installGen2()
     return result
   end
 
+  local function repaint() return "repaint" end
+
+  -- A string's or a cursor's own cell, by where it lands: outside every
+  -- see-through box it is the cart's; inside one, the box under it is
+  -- already its paper and it goes; on a border it stands in for the border
+  -- tile, so the border is taken out from under it and the cell is laid at
+  -- the box's strength.
+  local function cellPick(x, y, w, h)
+    x, y, w, h = tonumber(x), tonumber(y), tonumber(w), tonumber(h)
+    if not (x and y and w and h and w > 0 and h > 0) then return "as is" end
+    local where = clearedCell(math.floor(x / 8), math.floor(y / 8),
+      math.ceil((x + w) / 8) - 1, math.ceil((y + h) / 8) - 1)
+    if where == "inside" then return "drop" end
+    if where == "border" then return "repaint" end
+    return "as is"
+  end
+
   local basePaletteBox = Chrome.paletteBox
   if type(basePaletteBox) == "function" then
     Chrome.paletteBox = function(tx, ty, tw, th, ...)
@@ -3417,11 +3538,10 @@ local function installGen2()
         return basePaletteBox(tx, ty, tw, th, ...)
       end
       local x2, y2 = tx + tw - 1, ty + th - 1
-      if insideCleared(tx, ty, x2, y2) then
-        return translucentFills(0, basePaletteBox, tx, ty, tw, th, ...)
-      end
+      local nested = insideCleared(tx, ty, x2, y2)
       cleared[#cleared + 1] = { tx, ty, x2, y2 }
-      return translucentFills(alpha, basePaletteBox, tx, ty, tw, th, ...)
+      return throughFills(alpha, nested and repaint or nil, basePaletteBox,
+        tx, ty, tw, th, ...)
     end
   else
     mod.log:warn("src.ui.gen2.Chrome has no paletteBox; CLEAR BOXES has "
@@ -3430,19 +3550,15 @@ local function installGen2()
 
   -- A cell's own paper goes only where a see-through box is already its
   -- paper.  A string on the HUD, or in a box that kept its paper, keeps its
-  -- cell -- which is what CLEAR HUD = OFF asks for.
-  local function inCleared(tx, ty)
-    tx, ty = tonumber(tx), tonumber(ty)
-    return tx ~= nil and ty ~= nil and insideCleared(tx, ty, tx, ty)
-  end
-
+  -- cell -- which is what CLEAR HUD = OFF asks for.  See `cellPick`.
   local baseCursor = Chrome.cursorThrough
   if type(baseCursor) == "function" then
     Chrome.cursorThrough = function(tx, ty, ...)
-      if keying or not boxAlpha() or not inCleared(tx, ty) then
+      local alpha = boxAlpha()
+      if keying or not alpha or #cleared == 0 then
         return baseCursor(tx, ty, ...)
       end
-      return translucentFills(0, baseCursor, tx, ty, ...)
+      return throughFills(alpha, cellPick, baseCursor, tx, ty, ...)
     end
   end
 
@@ -3466,11 +3582,14 @@ local function installGen2()
       Chrome[name] = function(text, a, b, palette, ...)
         if not keying then
           -- CLEAR BOXES: inside a see-through box the string's own paper
-          -- cell goes, its ink is the box's.  `a` is the first column of a
-          -- printThrough and the last of a printRightThrough; either is in
-          -- the box the line is printed in.  See `boxAlpha`.
-          if boxAlpha() and inCleared(a, b) then
-            return translucentFills(0, base, text, a, b, palette, ...)
+          -- cell goes, its ink is the box's; on the box's border the cell
+          -- stands in for the border tile.  Sorted by the cell the string
+          -- actually paints, which a printRightThrough's `a` is one past the
+          -- end of.  See `cellPick`.
+          local alpha = boxAlpha()
+          if alpha and #cleared > 0 then
+            return throughFills(alpha, cellPick, base, text, a, b, palette,
+              ...)
           end
           return base(text, a, b, palette, ...)
         end
@@ -3718,6 +3837,21 @@ local function installGen2()
     if not okPaint then
       mod.log:warn("the field was not painted: %s", tostring(paintProblem))
     end
+    -- ...and where it went, for CLEAR BOXES to paint it again under a box
+    -- that hides what an earlier box printed.  See `repaintUnder`.
+    sceneAt.live = false
+    local G = love.graphics
+    if okPaint and G.transformPoint then
+      local x0, y0 = G.transformPoint(0, 0)
+      local x1, y1 = G.transformPoint(width, height)
+      if x1 > x0 and y1 > y0 then
+        sceneAt.live, sceneAt.scene = true, self
+        sceneAt.canvas = G.getCanvas()
+        sceneAt.left, sceneAt.top, sceneAt.right, sceneAt.bottom =
+          x0, y0, x1, y1
+        sceneAt.sx, sceneAt.sy = (x1 - x0) / width, (y1 - y0) / height
+      end
+    end
 
     bleedImage, bleedW, bleedH = chosen, width, height
     bleedTint = pendingTint
@@ -3743,6 +3877,7 @@ local function installGen2()
     local okDraw, err = pcall(baseScene, self, bodyFn, ...)
     active, consumed, pendingImage, pendingTint = false, false, nil, nil
     for i = #cleared, 1, -1 do cleared[i] = nil end
+    sceneAt.live, sceneAt.scene, sceneAt.canvas = false, nil, nil
     if not okDraw then error(err, 0) end
   end
 

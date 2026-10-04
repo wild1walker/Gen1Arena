@@ -309,16 +309,46 @@ do
   end
 
   -- Every frame of every battle asks: once the answer is in hand, a frame
-  -- that changes nothing requires nothing and decides nothing again.
+  -- that changes nothing requires nothing and decides nothing again.  A
+  -- decision is counted where it starts, its read of the terrain table: the
+  -- table is emptied into a stand-in that answers through __index, so every
+  -- lookup is seen and none is changed.
+  local slots = mod.exports.TERRAIN_SLOT
+  local held = {}
+  for k, v in pairs(slots) do held[k] = v end
+  for k in pairs(held) do slots[k] = nil end
+  local decided = 0
+  setmetatable(slots, { __index = function(_, k)
+    decided = decided + 1
+    return held[k]
+  end })
   local asked = 0
   local realRequire = require
+  drawAt("grass", "FR_ROUTE_1", 3)
+  decided = 0
   require = function(name) asked = asked + 1; return realRequire(name) end
   for _ = 1, 50 do drawAt("grass", "FR_ROUTE_1", 3) end
   require = realRequire
   eq(asked, 0, "fifty frames of one battle: no module looked up again")
+  eq(decided, 0, "and nothing decided again")
+  -- Each of the five things the answer turns on is a new answer.
+  drawAt("grass", "FR_ROUTE_1", 6)
+  eq(decided, 1, "a new map type decides again")
+  drawAt("water", "FR_ROUTE_1", 6)
+  eq(decided, 2, "so does a new terrain")
+  profile = "rse"
+  BattleBg.draw("water", 0, 0, 0)
+  profile = "frlg"
+  eq(decided, 3, "and a new cart family")
+  battle = { wild = false }
+  BattleBg.draw("water", 0, 0, 0)
+  eq(decided, 4, "and a trainer where there was a wild one")
   drawAt("grass", "FR_VIRIDIAN_FOREST", 3)
+  eq(decided, 5, "and a new map")
   eq(draws[1].image.path:match("wide/(.*)$"), "forest.png",
      "and a new map is a new answer")
+  setmetatable(slots, nil)
+  for k, v in pairs(held) do slots[k] = v end
 
   eq(drawAt("underwater", "FR_ROUTE_19", 5), "the cart's",
      "no picture: the cart's own draw, and its own answer")

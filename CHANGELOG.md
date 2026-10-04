@@ -25,9 +25,10 @@
   the message box and the command and move menus — lay their paper at 90%
   down to 0% in steps of ten; border and ink stay. Boxes the cart draws over
   the HUD and the pics (FIGHT's type and PP, the YES/NO, the level-up stats)
-  keep their paper, a menu nested in the message box lays no second layer,
-  and a line's own paper cell goes only inside a see-through box. Only while
-  a backdrop is up.
+  keep their paper. A menu opened over the message box still hides the
+  message under it, as on the cart, and is one layer of paper, not two; the
+  continue arrow replaces the border it sits on. A line's own paper cell goes
+  only inside a see-through box. Only while a backdrop is up.
 - `tools/audit_gen2_arena.py` replays every map header in pret's Crystal
   disassembly through the Gold tables, to read for the wrong kind of place.
 

@@ -102,21 +102,68 @@ love.image = { newImageData = newImageData }
 -- frame, and both are a `rectangle("fill", ...)` otherwise identical.
 local pen = { 1, 1, 1, 1 }
 
+-- The transform, the scissor, the blend mode and the canvas, kept just far
+-- enough for CLEAR BOXES to be asked where it painted the field again: a
+-- translate and one uniform scale, `push("all")` restoring the rest the way
+-- the real one does.  Every fill and every draw is stamped with the order it
+-- happened in and the scissor it happened under.
+local xf = { x = 0, y = 0, s = 1 }
+local scissor, blend, canvasNow = nil, "alpha", nil
+local stack = {}
+local seq = 0
+local function stamp(entry)
+  seq = seq + 1
+  entry.at, entry.scissor, entry.blend = seq, scissor, blend
+  entry.xf = { x = xf.x, y = xf.y, s = xf.s }
+  return entry
+end
+
 love.graphics = {
   rectangle = function(mode, x, y, w, h)
-    fills[#fills + 1] = { kind = "rect", x = x, y = y, w = w, h = h,
-                          color = { pen[1], pen[2], pen[3] }, alpha = pen[4] }
+    fills[#fills + 1] = stamp({ kind = "rect", x = x, y = y, w = w, h = h,
+                          color = { pen[1], pen[2], pen[3] }, alpha = pen[4] })
   end,
   setColor = function(r, g, b, a) pen = { r or 0, g or 0, b or 0, a or 1 } end,
   getColor = function() return pen[1], pen[2], pen[3], pen[4] end,
-  push = function() end,
-  pop = function() end,
-  origin = function() end,
-  setScissor = function() end,
+  push = function(kind)
+    stack[#stack + 1] = { xf = { x = xf.x, y = xf.y, s = xf.s },
+      all = kind == "all", pen = pen, scissor = scissor, blend = blend,
+      canvas = canvasNow }
+  end,
+  pop = function()
+    local top = table.remove(stack)
+    if not top then return end
+    xf = top.xf
+    if top.all then
+      pen, scissor, blend, canvasNow = top.pen, top.scissor, top.blend,
+        top.canvas
+    end
+  end,
+  origin = function() xf = { x = 0, y = 0, s = 1 } end,
+  translate = function(dx, dy)
+    xf.x, xf.y = xf.x + dx * xf.s, xf.y + dy * xf.s
+  end,
+  scale = function(k) xf.s = xf.s * k end,
+  transformPoint = function(x, y) return xf.x + x * xf.s, xf.y + y * xf.s end,
+  setScissor = function(x, y, w, h)
+    scissor = x and { x, y, w, h } or nil
+  end,
+  getScissor = function()
+    if scissor then return scissor[1], scissor[2], scissor[3], scissor[4] end
+  end,
+  intersectScissor = function(x, y, w, h)
+    if scissor then
+      local x2 = math.min(x + w, scissor[1] + scissor[3])
+      local y2 = math.min(y + h, scissor[2] + scissor[4])
+      x, y = math.max(x, scissor[1]), math.max(y, scissor[2])
+      w, h = math.max(0, x2 - x), math.max(0, y2 - y)
+    end
+    scissor = { x, y, w, h }
+  end,
   setShader = function() end,
-  setBlendMode = function() end,
-  getCanvas = function() return nil end,
-  setCanvas = function() end,
+  setBlendMode = function(mode) blend = mode end,
+  getCanvas = function() return canvasNow end,
+  setCanvas = function(c) canvasNow = c end,
   clear = function() end,
   newQuad = function(x, y, w, h) return { x = x, y = y, w = w, h = h } end,
   -- Two callers, told apart by what they hand over: a backdrop arrives as a
@@ -139,7 +186,7 @@ love.graphics = {
     return { newImageData = function() return CANVAS_DATA() end }
   end,
   draw = function(image, a, b, c, d)
-    draws[#draws + 1] = { image = image, a = a, b = b, c = c, d = d }
+    draws[#draws + 1] = stamp({ image = image, a = a, b = b, c = c, d = d })
   end,
 }
 
@@ -254,7 +301,9 @@ BattleState.drawPanel = function(self)
   -- The bottom strip, which is NOT the HUD: its box really does have paper.
   Chrome.box(0, 12, 20, 6)
   Chrome.printThrough("HELLO", 1, 14, Chrome.DEFAULT_BOX_PALETTE)
-  Chrome.cursorThrough(0, 14, Chrome.DEFAULT_BOX_PALETTE)
+  -- In the box's gutter, as Gold's menu cursor is: its column 0 is the
+  -- border, and a cell there stands in for the border tile.
+  Chrome.cursorThrough(1, 16, Chrome.DEFAULT_BOX_PALETTE)
   if self.extra then self.extra() end
   -- A piece of chrome that fills part of the screen -- the START menu's own
   -- block is one -- which must not be mistaken for the field.
@@ -369,6 +418,8 @@ end
 
 local function frame(self)
   fills, draws, drawn, keyed, prints = {}, {}, {}, {}, {}
+  xf, scissor, blend, canvasNow, stack = { x = 0, y = 0, s = 1 }, nil,
+    "alpha", nil, {}
   BattleState.drawScene(self)
 end
 
@@ -1343,18 +1394,122 @@ do
   eq(#kinds("cursor"), 1, "and so does a cursor in one")
 
   -- The strip's boxes nest: the command menu is drawn inside the message
-  -- box.  Paper laid twice is twice as opaque, so the strip read 50% on the
-  -- left and 75% on the right.  The inner box lays none of its own.
+  -- box, OVER a message that is still up -- the Dude's tutorial, and the
+  -- locked-in fallback to the menu, both keep it.  Paper laid twice is twice
+  -- as opaque, so the strip read 50% on the left and 75% on the right; no
+  -- paper at all let the message's tail print through FIGHT.  The inner box
+  -- puts the backdrop back under itself and lays one layer on that.
+  local function backdropDraws()
+    local out = {}
+    for _, d in ipairs(draws) do
+      if d.image and d.image.getWidth then out[#out + 1] = d end
+    end
+    return out
+  end
+  local function near(a, b) return a and b and math.abs(a - b) < 1e-9 end
+  local function sameRect(r, x, y, w, h)
+    return r and r[1] == x and r[2] == y and r[3] == w and r[4] == h
+  end
+  local tail
   local function menu()
+    tail = Chrome.printThrough("RATTATA APPEARED", 1, 16,
+      Chrome.DEFAULT_BOX_PALETTE)
     Chrome.box(8, 12, 12, 6)
     Chrome.printThrough("FIGHT", 10, 14, Chrome.DEFAULT_BOX_PALETTE)
   end
   frame(screen({ drawsPics = false, extra = menu }))
   boxes = kinds("box")
-  eq(#boxes, 1, "a box inside a cleared box lays no second paper")
-  ok(boxes[1] and math.abs(boxes[1].alpha - 0.5) < 1e-9,
-     "so the strip is one strength edge to edge")
-  eq(#kinds("rect"), 0, "and a line in the inner box loses its cell too")
+  eq(#boxes, 2, "the menu over the message box lays its own paper")
+  ok(boxes[1] and near(boxes[1].alpha, 0.5) and boxes[2]
+     and near(boxes[2].alpha, 0.5),
+     "one layer each, at the strength picked")
+  local field = backdropDraws()
+  eq(#field, 2, "the field went down once for the frame and once under the "
+     .. "menu")
+  local again = field[2]
+  ok(again and sameRect(again.scissor, 64, 96, 96, 48),
+     "and the second time only inside the menu's own rect")
+  ok(again and again.at < boxes[2].at,
+     "before the menu's paper -- so the paper goes on the backdrop, not on "
+     .. "the message box's paper")
+  local line
+  for _, printed in ipairs(prints) do
+    if printed.text == "RATTATA APPEARED" then line = printed end
+  end
+  ok(line and tail == 16 * 8, "with the message's tail printed under it first")
+  eq(scissor, nil, "and the scissor is handed back")
+  eq(#kinds("rect"), 0, "a line in the inner box still loses its cell")
+
+  -- Drawn the way the panel is: under a transform of the caller's
+  -- (Chrome.withPanel's translate and scale), and with the strip under one of
+  -- its own on top (WideBattle's).  The field goes back where drawScene put
+  -- it, not where the box is drawn from.
+  local function shifted()
+    love.graphics.push()
+    love.graphics.translate(8, 0)
+    Chrome.box(8, 12, 11, 6)
+    love.graphics.pop()
+  end
+  fills, draws, drawn, keyed, prints = {}, {}, {}, {}, {}
+  xf, scissor, blend, canvasNow, stack = { x = 10, y = 20, s = 2 }, nil,
+    "alpha", nil, {}
+  BattleState.drawScene(screen({ drawsPics = false, extra = shifted }))
+  field = backdropDraws()
+  again = field[2]
+  ok(again and sameRect(again.scissor, 10 + (8 + 64) * 2, 20 + 96 * 2, 88 * 2,
+     48 * 2), "under a scaled panel the scissor is the box on the surface")
+  ok(again and again.xf.x == 10 and again.xf.y == 20 and again.xf.s == 2,
+     "and the field is painted in drawScene's transform, not the strip's")
+  ok(field[1] and again and field[1].xf.x == again.xf.x
+     and field[1].xf.s == again.xf.s, "the same one it went down in")
+
+  -- A box beyond the field -- WideBattle docks the strip below it on a tall
+  -- screen -- has nothing of the arena's under it to put back: a second
+  -- layer of paper is the most it can do.
+  local function docked()
+    love.graphics.push()
+    love.graphics.translate(0, 200)
+    Chrome.box(8, 12, 12, 6)
+    love.graphics.pop()
+  end
+  frame(screen({ drawsPics = false, extra = docked }))
+  eq(#backdropDraws(), 1, "nothing is repainted outside the field")
+  boxes = kinds("box")
+  ok(boxes[2] and near(boxes[2].alpha, 0.5),
+     "and the box is laid at the strength picked over the one under it")
+
+  -- An animation bakes the panel into a canvas of its own, laid over the
+  -- surface the field is on: there the box's rect is cleared to nothing.
+  local LAYER = {}
+  local function baked()
+    local was = canvasNow
+    love.graphics.setCanvas(LAYER)
+    Chrome.box(8, 12, 12, 6)
+    love.graphics.setCanvas(was)
+  end
+  frame(screen({ drawsPics = false, extra = baked }))
+  eq(#backdropDraws(), 1, "on an animation's layer the field is not painted")
+  local erased
+  for _, f in ipairs(fills) do
+    if f.blend == "replace" and f.alpha == 0 then erased = f end
+  end
+  ok(erased and erased.x == 64 and erased.y == 96 and erased.w == 96
+     and erased.h == 48, "the rect is cleared back to transparent instead")
+  eq(blend, "alpha", "and the blend mode is handed back")
+
+  -- The continue arrow sits ON the message box's bottom border, (18,17).  On
+  -- the cart its tile replaces the border's; see-through, its cell dropped
+  -- left the arrow drawn across the border's lines.
+  local function arrow()
+    Chrome.printThrough("v", 18, 17, Chrome.DEFAULT_BOX_PALETTE)
+  end
+  frame(screen({ drawsPics = false, extra = arrow }))
+  field = backdropDraws()
+  ok(field[2] and sameRect(field[2].scissor, 144, 136, 8, 8),
+     "the border under the arrow is taken out")
+  local cell = kinds("rect")[1]
+  ok(cell and cell.x == 144 and cell.y == 136 and near(cell.alpha, 0.5)
+     and cell.at > field[2].at, "and its cell laid at the box's strength")
 
   -- CLEAR HUD = OFF asks for the cart's HUD, paper cells and all; CLEAR BOXES
   -- is about the boxes and leaves the HUD's text alone.
