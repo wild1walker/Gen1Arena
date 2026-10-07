@@ -262,6 +262,10 @@ over to it before requiring anything.
 Anything that fails in that draw is the cart's background, said once in the
 log, and never an error in the battle's own draw.
 
+Ruby and Sapphire, which the engine runs in beta, are Gen 3 boots too and get
+the same: the terrain picks the picture, and their Hoenn maps carry the same
+names Emerald's do.
+
 ## Town recolours
 
 Taken from the engine's own overworld colouring, not invented.
