@@ -3621,9 +3621,9 @@ local function installGen2()
       and type(GbcPalette.use) == "function"
       and type(GbcPalette.useKeyed) == "function" then
     local realUse = GbcPalette.use
-    GbcPalette.use = function(colors)
-      if keying then return GbcPalette.useKeyed(colors) end
-      return realUse(colors)
+    GbcPalette.use = function(colors, ...)
+      if keying then return GbcPalette.useKeyed(colors, ...) end
+      return realUse(colors, ...)
     end
   else
     mod.log:warn("no src.render.GbcPalette keyed shader; the HP and exp bars "
@@ -3635,14 +3635,14 @@ local function installGen2()
       and type(BattleHud.drawTile) == "function" then
     local baseTile = BattleHud.drawTile
     BattleHud.drawTile = function(self, key, firstTile, tile, tx, ty, colors,
-                                  mirror)
+                                  mirror, ...)
       if colors == nil and keying then
         local ink = hudInk()
         -- Colours 0 to 2 are never drawn: the sheet is 1bpp, so its only two
         -- shades are 0 (keyed away) and 3.
         if ink then colors = { ink, ink, ink, ink } end
       end
-      return baseTile(self, key, firstTile, tile, tx, ty, colors, mirror)
+      return baseTile(self, key, firstTile, tile, tx, ty, colors, mirror, ...)
     end
   else
     mod.log:warn("no src.ui.gen2.BattleHud; the HUD border stays flat black "
@@ -3899,8 +3899,8 @@ local function install()
   -- introText, so the fact is lost by the time we draw. Keep it.
   local newWild = BattleState.newWild
   if newWild then
-    BattleState.newWild = function(game, species, level, opts)
-      local battle = newWild(game, species, level, opts)
+    BattleState.newWild = function(game, species, level, opts, ...)
+      local battle = newWild(game, species, level, opts, ...)
       if battle then battle.kaHooked = opts and opts.hooked or nil end
       return battle
     end
@@ -3924,7 +3924,12 @@ local function install()
   -- nothing to put back.
   local battlerPic = BattleState.drawBattlerPic
   if battlerPic then
-    BattleState.drawBattlerPic = function(self, battler, x, y, scale)
+    -- Everything after the scale goes through as it came: the engine draws
+    -- the enemy as `drawBattlerPic(enemy, dx, dy, s, sx - slide, sy)`, and
+    -- the shake and slide in those two are what move a Substitute doll, and
+    -- the faint's blob and its clip, with the rest of the screen.  Kept to
+    -- four, a doll stood still while the screen shook round it.
+    BattleState.drawBattlerPic = function(self, battler, x, y, scale, ...)
       if active and consumed and battler
          and mod.options:get("pic_paper") then
         local ok, err = pcall(function()
@@ -3936,7 +3941,7 @@ local function install()
           mod.log:warn("the pic paper was not laid: %s", tostring(err))
         end
       end
-      return battlerPic(self, battler, x, y, scale)
+      return battlerPic(self, battler, x, y, scale, ...)
     end
   end
 

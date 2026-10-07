@@ -58,6 +58,13 @@
   seeds only past the figure; every other edge, and every trainer facing you,
   is cut exactly as before (checked over all 67 of Crystal's trainer pics).
 
+- **A Substitute doll shakes and slides with the screen on Red.** The engine
+  hands the enemy's pic draw the screen's shake and the intro's slide as two
+  more arguments, and those are what move a Substitute doll, and the faint of
+  a doll or a minimised blob, with everything else. The MON PAPER wrap passed
+  on only the first four, so with this mod installed the doll stood still
+  while the screen shook round it. Every argument goes through now.
+
 ## 0.32.0
 
 - **Reverted 0.31.0's FILL zoom.** It made the backdrop reach every edge of the

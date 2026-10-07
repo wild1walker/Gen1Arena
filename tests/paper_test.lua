@@ -288,8 +288,9 @@ local mod = {
 local BattleState = {}
 BattleState.__index = BattleState
 function BattleState:picImage(sprite) return sprite end
-function BattleState:drawBattlerPic(battler, x, y, scale)
-  self.drewPic = { battler = battler, x = x, y = y, scale = scale }
+function BattleState:drawBattlerPic(battler, x, y, scale, shakeX, shakeY)
+  self.drewPic = { battler = battler, x = x, y = y, scale = scale,
+                   shakeX = shakeX, shakeY = shakeY }
 end
 function BattleState:drawClassic()
   -- the engine's own letterbox transform is up for the whole battle draw
@@ -555,6 +556,19 @@ do
   eq(#drawWith(newPic(PLUME_ROWS)), 0, "nor does an awkward one")
   ignorePin = false
   dpiScale = 1
+end
+
+do
+  -- The engine draws the enemy as `drawBattlerPic(enemy, dx, dy, s, sx -
+  -- slide, sy)`: the last two are the shake and the slide, and they are what
+  -- move a Substitute doll and a faint's clip with the screen.  The wrap
+  -- passes them through, with a backdrop up or not.
+  local battle = setmetatable({ player = { sprite = newPic(SOLID_ROWS) },
+                                game = {} }, BattleState)
+  BattleState.drawBattlerPic(battle, battle.player, 8, 40, 2, -3, 1)
+  eq(battle.drewPic and battle.drewPic.shakeX, -3,
+     "the shake and slide reach the engine's pic draw")
+  eq(battle.drewPic and battle.drewPic.shakeY, 1, "both of them")
 end
 
 print(("%d/%d checks passed  (Gen1Arena paper)")
