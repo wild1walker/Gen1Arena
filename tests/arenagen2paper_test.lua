@@ -1463,9 +1463,9 @@ do
   ok(field[1] and again and field[1].xf.x == again.xf.x
      and field[1].xf.s == again.xf.s, "the same one it went down in")
 
-  -- A box beyond the field -- WideBattle docks the strip below it on a tall
-  -- screen -- has nothing of the arena's under it to put back: a second
-  -- layer of paper is the most it can do.
+  -- WideBattle docks the strip below the field on a tall screen.  A box
+  -- wholly below it has nothing of the arena's under it -- only the
+  -- playfield's opaque paper, which one more layer of paper does not change.
   local function docked()
     love.graphics.push()
     love.graphics.translate(0, 200)
@@ -1473,10 +1473,28 @@ do
     love.graphics.pop()
   end
   frame(screen({ drawsPics = false, extra = docked }))
-  eq(#backdropDraws(), 1, "nothing is repainted outside the field")
+  eq(#backdropDraws(), 1, "nothing is repainted wholly outside the field")
   boxes = kinds("box")
   ok(boxes[2] and near(boxes[2].alpha, 0.5),
-     "and the box is laid at the strength picked over the one under it")
+     "and the box is laid at the strength picked")
+
+  -- On a 16:9 screen it hangs over the field's bottom edge by 18 rows: the
+  -- part over the field is put back, so the menu is one layer there like the
+  -- rest of the strip, not two.
+  local function overhang()
+    love.graphics.push()
+    love.graphics.translate(0, 18)
+    Chrome.box(8, 12, 12, 6)
+    love.graphics.pop()
+  end
+  frame(screen({ drawsPics = false, extra = overhang }))
+  field = backdropDraws()
+  eq(#field, 2, "a box half over the field has that half put back")
+  ok(field[2] and sameRect(field[2].scissor, 64, 96 + 18, 96, 144 - 114),
+     "clipped to where the box and the field overlap")
+  boxes = kinds("box")
+  ok(boxes[2] and near(boxes[2].alpha, 0.5) and field[2]
+     and field[2].at < boxes[2].at, "and then laid once, on top")
 
   -- An animation bakes the panel into a canvas of its own, laid over the
   -- surface the field is on: there the box's rect is cleared to nothing.

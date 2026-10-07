@@ -3429,9 +3429,11 @@ local function installGen2()
   -- and the field is painted again where drawScene painted it.  Under an
   -- animation the panel is baked into a canvas of its own and laid over the
   -- surface (BattleAnimView:bake), so the backdrop is already underneath and
-  -- the rect is cleared back to nothing instead.  Anywhere the backdrop never
-  -- reached -- a docked strip below the field -- is not the arena's to put
-  -- back, and the caller falls back to a second layer of paper.
+  -- the rect is cleared back to nothing instead.  Only the part of the rect
+  -- over the field is put back: WideBattle's docked strip can hang below the
+  -- field -- by 18 rows on a 16:9 screen, 28 on a 16:10 one -- onto the
+  -- playfield's own opaque paper, and there one more layer of paper over
+  -- paper changes nothing.
   local warnedRepaint = false
   local function repaintUnder(x, y, w, h)
     local G = love.graphics
@@ -3452,12 +3454,11 @@ local function installGen2()
     else
       local ax, ay = G.transformPoint(x, y)
       local bx, by = G.transformPoint(x + w, y + h)
-      local left, right = math.min(ax, bx), math.max(ax, bx)
-      local top, bottom = math.min(ay, by), math.max(ay, by)
-      if left < at.left - 0.5 or top < at.top - 0.5
-         or right > at.right + 0.5 or bottom > at.bottom + 0.5 then
-        return false
-      end
+      local left = math.max(math.min(ax, bx), at.left)
+      local right = math.min(math.max(ax, bx), at.right)
+      local top = math.max(math.min(ay, by), at.top)
+      local bottom = math.min(math.max(ay, by), at.bottom)
+      if right <= left or bottom <= top then return true end
       -- Rounded the way a fill's edges are: a pixel is in when its centre is.
       local sx, sy = math.floor(left + 0.5), math.floor(top + 0.5)
       local sw = math.floor(right + 0.5) - sx
