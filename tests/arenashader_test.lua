@@ -156,10 +156,15 @@ do
     "...and it is drawCover that it wraps")
 
   -- The bars around a wide battle carry the same picture's edge.
-  local bleed = src:match("\n(  local r0, g0, b0 = barColor%(%)\n.-\n  end%)\n)")
-  ok(bleed ~= nil, "the bleed into the letterbox bars is found")
-  ok(bleed and bleed:find("withoutShader", 1, true) ~= nil,
-    "and its flat fill is inside the guard too")
+  -- Anchored on both ends: the guard has to be the very next line after the
+  -- colour is read, and the block has to end where the guard does -- or a
+  -- `withoutShader` anywhere further down the file would answer for it.
+  local bleed = src:match("\n  local r0, g0, b0 = barColor%(%)\n"
+    .. "(  withoutShader%(function%(%)\n.-\n  end%)\n)")
+  ok(bleed ~= nil, "the bleed into the letterbox bars is found, and its "
+    .. "flat fill opens inside the guard")
+  ok(bleed and bleed:find('realRectangle("fill"', 1, true) ~= nil,
+    "and the fill is in it")
   local barsPicture = src:match("\n(  paintPicture%(tint, function%(%)\n.-\n  end%)\n)")
   ok(barsPicture and barsPicture:find("g.draw(img, quad", 1, true) ~= nil,
     "and the picture it carries into the bars goes through paintPicture -- "
@@ -172,7 +177,9 @@ do
   -- by its RED channel, so a black fill lands on the page's shade 3, and
   -- under a reversed DARK ramp shade 3 is WHITE: the one colour the fill
   -- exists to get rid of, painted by the fix for it.
-  local off = src:match('\n(  if mod%.options:get%("bleed"%) == false then\n.-\n    return\n  end\n)')
+  local off = src:match('\n(  if not edge then\n.-\n    return\n  end\n)')
+  ok(src:find('local edge = mod.options:get("bleed") ~= false', 1, true) ~= nil,
+    "`edge` is EDGE TO EDGE")
   ok(off ~= nil, "the bars' own colour, for the frames the picture stays home")
   ok(off and off:find("withoutShader", 1, true) ~= nil,
     "inside the guard as well -- a black fill read through a reversed ramp "

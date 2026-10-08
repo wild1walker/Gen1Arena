@@ -217,7 +217,7 @@ which is also what a header with no group says.
 
 Everything else behaves as it does on Red: the same two crops, the same
 palette correction, the same `BATTLE SCENES` row to turn the whole thing off.
-And three rows of Gold's own:
+And two rows of Gold's own, and two of the cart's settings it follows:
 
 - **TIME OF DAY** (on): the picture goes through the map's own night and
   morning, fitted to the cart's `DAY` and `NITE` palettes for that map, so a
@@ -226,8 +226,15 @@ And three rows of Gold's own:
 - **CLEAR BOXES** (OFF to 100%): the bottom strip's boxes lay their paper at
   the strength picked; border and ink stay. Boxes over the HUD and the pics
   keep theirs.
-- With the cart's **BATTLE BG** on `WORLD`, the world shows round the battle
-  and the bars are not drawn.
+- With the cart's **BATTLE BG** on `WORLD`, the picture still goes into the
+  bars as far as it reaches (on the classic layout, the side bars of any
+  screen wider than the battle); the strip of it under the art's flat band,
+  beside the message box, takes the letterbox colour as on the other
+  settings; and the world fills everything else, where black used to be.
+  **EDGE TO EDGE** off leaves all of the surround to the world.
+- With **BATTLE HUD** on `EXTENDED`, a wide battle's HUD and bottom strip sit
+  above and below the field; only the side bars are filled, so nothing is
+  painted over them.
 
 `tools/audit_gen2_arena.py <pokecrystal>` replays every Crystal map header
 through these tables and prints where each kind of place lands.

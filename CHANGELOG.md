@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.37.1
+
+### Fixed
+
+- **The backdrop covers the edges again on BATTLE BG = WORLD** (Gold, Silver,
+  Crystal). 0.37.0 left the whole surround of a WORLD battle to the world,
+  which took the picture out of the side bars as well: on a 4:3 screen the
+  dimmed overworld showed either side of the field. The picture goes into
+  the side bars again (classic layout, where the wide art reaches them), with
+  the letterbox colour beside the message box where the art stops, exactly
+  as on the other settings. The world keeps every part of the surround the
+  picture never covers (on the classic layout, above and below the battle)
+  instead of the black 0.36.0 put there. **EDGE TO EDGE** off leaves all of
+  it to the world.
+- **BATTLE HUD = EXTENDED keeps its HUD** (Gold, Silver, Crystal, wide). A
+  docked battle has its HUD at the top of the window and the message box and
+  menus at the bottom, in what were the bars above and below the field, and
+  the bars were painted over them. A docked battle's bars are now only the
+  two either side, and its field is painted inside the battle: the 256-wide
+  route art no longer runs onto the paper above and below it.
+- **A touch skin's screen, or a viewport layout, gets its bars where its
+  battle is** (Gold, Silver, Crystal). With a skin whose screen is a cutout
+  (the bundled `gb_anim`, `gba_purple` and `tv_crt`), or a `render.viewport`
+  mod drawing the game into part of the window, the battle was measured
+  against the whole window and a bar could be painted across it. The battle
+  is measured where the engine places it now (`Playfield.dimensions()`).
+
 ## 0.37.0
 
 ### Added

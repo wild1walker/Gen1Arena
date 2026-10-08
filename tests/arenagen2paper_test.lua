@@ -109,6 +109,10 @@ local pen = { 1, 1, 1, 1 }
 -- happened in and the scissor it happened under.
 local xf = { x = 0, y = 0, s = 1 }
 local scissor, blend, canvasNow = nil, "alpha", nil
+-- How wide every backdrop reports itself, read live: the art the mod ships is
+-- 160 wide for the classic surface and 304 for the wide one, and only the
+-- wide art has anything to put in a classic battle's side bars.
+local backdropW = 160
 local stack = {}
 local seq = 0
 local function stamp(entry)
@@ -173,8 +177,9 @@ love.graphics = {
       return { mask = source, setFilter = function() end,
                getDimensions = function() return source.width, source.height end }
     end
-    return { getDimensions = function() return 160, 144 end,
-             setFilter = function() end, getWidth = function() return 160 end,
+    return { getDimensions = function() return backdropW, 144 end,
+             setFilter = function() end,
+             getWidth = function() return backdropW end,
              getHeight = function() return 144 end }
   end,
   -- ONE kind of canvas, whose pixels are whatever picture is in front of it
@@ -1061,6 +1066,17 @@ local function bars(view)
   return called
 end
 
+-- The bars painted and the pictures drawn since a frame's own fills and
+-- draws, which is everything the letterbox hook did.
+local function barsSince(f0, d0)
+  local painted, drawnIn = {}, {}
+  for i = f0 + 1, #fills do
+    if fills[i].kind == "rect" then painted[#painted + 1] = fills[i] end
+  end
+  for i = d0 + 1, #draws do drawnIn[#drawnIn + 1] = draws[i] end
+  return painted, drawnIn
+end
+
 -- 160x144 doubled and centred in a 400x400 window: bars on all four sides.
 local VIEW = { ww = 400, wh = 400, ox = 40, oy = 56, vpw = 320, vph = 288 }
 
@@ -1176,10 +1192,15 @@ do
   -- the payload cannot be what decides this: the battle's own `bgMode` is.
   -- Driven exactly as Game2:drawScene drives it -- the world call first, the
   -- battle, then the second call.
+  --
+  -- 0.37.0 left every bar to the world, and that took the picture out of the
+  -- side bars too -- see the 4:3 case below.  The picture goes where it
+  -- reaches; the world keeps the rest.  A classic battle with side bars is
+  -- given the 304-wide art (see wantsWideArt), so that is what is used here.
   local self = screen({ drawsPics = false })
   self.bgMode = function() return "world" end
+  backdropW = 304
   local view = { ww = 400, wh = 800, ox = 40, oy = 56, vpw = 320, vph = 288 }
-  local before = #(fills or {})
   bars({ ww = view.ww, wh = view.wh, ox = view.ox, oy = view.oy,
          vpw = view.vpw, vph = view.vph, worldActive = true })
   frame(self)
@@ -1187,16 +1208,18 @@ do
   local afterFrame = #fills
   local drawsAfterFrame = #draws
   ok(bars(view), "the hook passes the frame along")
-  eq(#kinds("rect") - #(function()
-       local out = {}
-       for i = 1, afterFrame do
-         if fills[i].kind == "rect" then out[#out + 1] = fills[i] end
-       end
-       return out
-     end)(), 0,
-     "and paints nothing into the bars: the overworld the engine drew there "
-     .. "is what the player chose to see")
-  eq(#draws, drawsAfterFrame, "nor draws the picture into them")
+  local painted, into = barsSince(afterFrame, drawsAfterFrame)
+  eq(#painted, 0,
+     "and paints nothing over the world: above and below the battle is the "
+     .. "overworld the engine drew there, which is what the player chose to "
+     .. "see, not the black 0.34.0 put there")
+  eq(#into, 2, "the picture still goes into the two side bars")
+  local outside = 0
+  for _, d in ipairs(into) do
+    if d.c < view.oy or d.c >= view.oy + view.vph then outside = outside + 1 end
+  end
+  eq(outside, 0, "beside the field, and nowhere above or below it")
+  backdropW = 160
   ok(mod.exports.arenaSurroundIsWorld(self), "the battle is read as WORLD")
 
   -- ...and the two other modes still get the bars, so this is a reading of
@@ -1212,7 +1235,6 @@ do
   bars(view)
   ok(#kinds("rect") > blackBefore, "and so does BLACK")
   ok(not mod.exports.arenaSurroundIsWorld(self), "which is not read as WORLD")
-  local _ = before
 end
 
 -- ------------------------------------------- the rectangle the bars are the
@@ -1275,6 +1297,38 @@ do
 end
 
 do
+  io.write("...in the game's own viewport when a layout gives it one\n")
+  -- A render.viewport layout has Game2 draw into a canvas of its own, and
+  -- drawScene is handed THAT size (src/core/Game2.lua, drawViewportFrame:
+  -- `GameViewport.dimensions()`), not the window's.
+  package.loaded["src.render.GameViewport"] = {
+    dimensions = function() return 1000, 600 end,
+  }
+  local rect = mod.exports.arenaPanelRect(
+    { battlePanelScale = BattleState.battlePanelScale }, 304, 144)
+  eq(rect and rect.ww, 1000, "the viewport's width, not the window's 1600")
+  eq(rect and rect.scale, 3, "so a 304x144 surface fits it three times")
+  eq(rect and rect.ox, 44, "centred in it")
+  eq(rect and rect.oy, 84, "both ways")
+  -- ...and inside a touch skin's screen cutout (or FAITHFUL RATIO's box),
+  -- `drawContained` hands drawScene the cutout, and Playfield is what knows.
+  package.loaded["src.render.Playfield"] = {
+    dimensions = function() return 411, 461 end,
+  }
+  rect = mod.exports.arenaPanelRect(
+    { battlePanelScale = BattleState.battlePanelScale }, 160, 144)
+  eq(rect and rect.ww, 411, "a cutout's width")
+  eq(rect and rect.wh, 461, "and height, ahead of the viewport's")
+  eq(rect and rect.oy, math.floor((461 - 144 * rect.scale) / 2),
+     "so the battle is centred in the cutout, where the engine put it")
+  package.loaded["src.render.Playfield"] = nil
+  package.loaded["src.render.GameViewport"] = nil
+  rect = mod.exports.arenaPanelRect(
+    { battlePanelScale = BattleState.battlePanelScale }, 304, 144)
+  eq(rect and rect.ww, WIN_W, "and with neither module, the window")
+end
+
+do
   io.write("...and the bars are drawn around THAT\n")
   local wasWide = BattleState.wideLayout
   BattleState.wideLayout = function() return true end
@@ -1326,6 +1380,240 @@ do
 
   BattleState.wideLayout = wasWide
   mod.stored.bleed = nil
+end
+
+-- ------------------------------------------- BATTLE BG = WORLD, on a 4:3 screen
+--
+-- *"I can't make the edges get covered up by the arena background anymore.  No
+-- setting seems to matter."*  A Crystal battle on a 4:3 handheld, the forest
+-- in the middle and the dimmed overworld either side of it.  0.37.0 handed
+-- every bar of a WORLD battle to the world, and the side bars of a classic
+-- battle are exactly where the wide art reaches.  Driven as Game2:drawScene
+-- drives a WORLD frame: the world call, the battle, then the second call.
+
+do
+  io.write("BATTLE BG = WORLD: the picture still goes where it reaches\n")
+  local wasDims, wasScale = love.graphics.getDimensions,
+    BattleState.battlePanelScale
+  love.graphics.getDimensions = function() return 640, 480 end
+  -- the classic 160x144 panel's integer fit, as `Chrome.fitScale`
+  BattleState.battlePanelScale = function(_, w, h)
+    return math.max(1, math.floor(math.min(w / 160, h / 144)))
+  end
+  backdropW = 304
+  local payload = { ww = 640, wh = 480, ox = 80, oy = 24, vpw = 480,
+                    vph = 432, scale = 3, dpiX = 1, dpiY = 1 }
+  local function worldFrame(self)
+    local first = {}
+    for k, v in pairs(payload) do first[k] = v end
+    first.worldActive = true
+    bars(first)
+    frame(self)
+    local f0, d0 = #fills, #draws
+    ok(bars(payload), "the hook passes the frame along")
+    return barsSince(f0, d0)
+  end
+
+  local self = screen({ drawsPics = false })
+  self.bgMode = function() return "world" end
+  worldFrame(self)        -- the first frame learns there are side bars
+  local painted, pictures = worldFrame(self)
+  ok(tookTheField(self), "the backdrop is in the field")
+  eq(#pictures, 2, "the picture goes into both side bars")
+  local left, right = pictures[1], pictures[2]
+  eq(left and left.b, 0, "the left one from the window's edge")
+  eq(left and left.c, 24, "level with the field")
+  eq(right and right.b, 560, "the right one from the field's right edge")
+  eq(left and left.a and left.a.h, 144, "the whole picture's height, this one having no band")
+  eq(#painted, 0,
+     "and nothing is painted over the world where the picture does not "
+     .. "reach -- the strips above and below are the overworld, never the "
+     .. "black 0.34.0 put there")
+
+  mod.stored.bleed = false
+  painted, pictures = worldFrame(self)
+  eq(#painted + #pictures, 0,
+     "EDGE TO EDGE off leaves every bar to the world")
+  mod.stored.bleed = nil
+
+  -- ...and WHITE, which Gold draws with no world call, is untouched: the
+  -- bars all answered for, and the same picture in the sides.
+  self.bgMode = function() return "white" end
+  frame(self)
+  local f0, d0 = #fills, #draws
+  bars(payload)
+  painted, pictures = barsSince(f0, d0)
+  eq(#painted, 8, "WHITE still answers for all eight bars")
+  eq(#pictures, 2, "and carries the picture into the sides")
+  ok(painted[1] and isBlack(painted[1]), "in black where it cannot reach")
+
+  backdropW = 160
+  love.graphics.getDimensions = wasDims
+  BattleState.battlePanelScale = wasScale
+end
+
+-- ------------------------------------------- BATTLE HUD = EXTENDED, docked
+--
+-- A wide battle with the extended HUD is drawn docked: the enemy's HUD lifted
+-- to the top of the window and the bottom strip dropped to its bottom edge,
+-- on a paper column the full height of the playfield (src/ui/gen2/
+-- WideBattle.lua `drawDocked`).  Above and below the surface is the HUD, so
+-- the only bars are the two either side of the column.
+
+do
+  io.write("a docked battle's HUD is not a bar\n")
+  package.loaded["src.ui.gen2.WideBattle"] = {
+    docked = function(battle) return battle.dockedHud == true end,
+  }
+  local wasWide = BattleState.wideLayout
+  BattleState.wideLayout = function() return true end
+  -- the 1600x900 window above: the surface at 40,90 1520x720
+  local payload = { ww = WIN_W, wh = WIN_H, ox = 320, oy = 18, vpw = 960,
+                    vph = 864, scale = 6, dpiX = 1, dpiY = 1 }
+  local function dockedBars(docked, mode)
+    local self = screen({ drawsPics = false })
+    self.dockedHud = docked
+    self.bgMode = function() return mode or "white" end
+    frame(self)
+    local f0, d0 = #fills, #draws
+    bars(payload)
+    return barsSince(f0, d0)
+  end
+  local function inColumn(list, width)
+    local n = 0
+    for _, r in ipairs(list) do
+      local x, w = r.x or r.b, r.w or width or 0
+      if x < 40 + 1520 and x + w > 40 then n = n + 1 end
+    end
+    return n
+  end
+
+  for _, edge in ipairs({ false, true }) do
+    if edge then mod.stored.bleed = nil else mod.stored.bleed = false end
+    local label = edge and "EDGE TO EDGE on" or "EDGE TO EDGE off"
+    local painted, pictures = dockedBars(true)
+    eq(#painted, 2, label .. ": two bars, one either side")
+    eq(inColumn(painted), 0,
+       label .. ": nothing over the column the HUD and the menus are docked in")
+    eq(inColumn(pictures, 1), 0, label .. ": not the picture either")
+    local full = 0
+    for _, r in ipairs(painted) do
+      if r.y == 0 and r.h == WIN_H then full = full + 1 end
+    end
+    eq(full, 2, label .. ": each the full height of the window")
+    eq(painted[1] and painted[1].w, 40, label .. ": the left one up to the "
+       .. "surface")
+    eq(painted[2] and painted[2].x, 1560, label .. ": the right one from it")
+  end
+  mod.stored.bleed = nil
+
+  local painted = dockedBars(true, "world")
+  eq(#painted, 0, "docked on WORLD: the sides are the world's")
+
+  -- ...and undocked -- a menu over the battle, or BATTLE HUD = STANDARD --
+  -- the surround is a surround again, all of it.
+  painted = dockedBars(false)
+  eq(#painted, 8, "undocked: every bar, above and below included")
+
+  -- Gold's ROUTE art is 256 wide, so on the 304-wide surface it is cover-
+  -- scaled past the top and bottom of the field.  Undocked, the bars above
+  -- and below carry that overflow.  Docked on the next frame, at the same
+  -- view, those bars' quads must not come back: they are cached by the bar's
+  -- index, and the undocked frame's first bar was the one above.
+  -- On a view no earlier case has used, so the undocked frame is the one that
+  -- fills that view's cache entry and the docked frame has to tell them apart.
+  backdropW = 256
+  payload.wh = WIN_H + 2
+  local _, undockedPictures = dockedBars(false)
+  local above = 0
+  for _, d in ipairs(undockedPictures) do
+    if d.c < 90 then above = above + 1 end
+  end
+  ok(above > 0, "undocked, 256-wide art reaches into the bar above the field")
+  local _, dockedPictures = dockedBars(true)
+  eq(#dockedPictures, 0,
+     "docked on the very next frame, none of it is drawn -- in particular "
+     .. "not the cached top bar's strip, onto the HUD's column")
+  payload.wh = WIN_H
+
+  -- ...and the field itself is painted inside the surface when docked:
+  -- `drawDocked` clips each of its groups and nothing round the scene, so the
+  -- same overflow would otherwise be painted over the docked paper column.
+  local function fieldDraw(docked)
+    local self = screen({ drawsPics = false })
+    self.dockedHud = docked
+    frame(self)
+    for _, d in ipairs(draws) do
+      if d.image and d.image.getWidth then return d end
+    end
+  end
+  local field = fieldDraw(true)
+  local clip = field and field.scissor
+  ok(clip and clip[1] == 0 and clip[2] == 0 and clip[3] == 304
+       and clip[4] == 144,
+     "docked, the field is painted under the surface's own clip")
+  eq(scissor, nil, "and the clip is handed back after it")
+  field = fieldDraw(false)
+  ok(field and field.scissor == nil,
+     "undocked it is left to the panel's clip, as it always was")
+
+  -- Under the transform WideBattle.draw puts the scene in -- translate to
+  -- the surface, scale to it -- at a FILL scale, whose edges fall between
+  -- pixels, with a clip already in force from further out.
+  local function placedField(ox, oy, k, outer, throw)
+    local self = screen({ drawsPics = false })
+    self.dockedHud = true
+    fills, draws, drawn, keyed, prints = {}, {}, {}, {}, {}
+    xf, scissor, blend, canvasNow, stack = { x = ox, y = oy, s = k },
+      outer and { outer[1], outer[2], outer[3], outer[4] } or nil,
+      "alpha", nil, {}
+    local realDraw = love.graphics.draw
+    if throw then
+      love.graphics.draw = function(image, ...)
+        if type(image) == "table" and image.getWidth then
+          error("the backdrop would not draw", 0)
+        end
+        return realDraw(image, ...)
+      end
+    end
+    BattleState.drawScene(self)
+    love.graphics.draw = realDraw
+    for _, d in ipairs(draws) do
+      if d.image and d.image.getWidth then return d end
+    end
+  end
+  -- a 2400x1080 phone in landscape at DPI 2.625: 914x411 units, scale 2.854
+  field = placedField(22, 0, 2.854)
+  clip = field and field.scissor
+  ok(clip and clip[1] == 22 and clip[2] == 0 and clip[3] == 868
+       and clip[4] == 411,
+     "at a fractional scale the clip is whole pixels rounded OUT, as the "
+     .. "engine's own Chrome.clipTo rounds -- truncated, the field's right "
+     .. "edge is a line of the paper under it (got "
+     .. (clip and table.concat(clip, ",") or "none") .. ")")
+  field = placedField(40, 90, 5, { 0, 0, 1000, 500 })
+  clip = field and field.scissor
+  ok(clip and clip[1] == 40 and clip[2] == 90 and clip[3] == 960
+       and clip[4] == 410,
+     "in the window's pixels, inside whatever clip was already there")
+  ok(scissor and scissor[1] == 0 and scissor[3] == 1000 and scissor[4] == 500,
+     "which is handed back after")
+  local warned = #mod.logged
+  placedField(40, 90, 5, { 0, 0, 1000, 500 }, true)
+  ok(#mod.logged > warned, "a paint that throws is reported")
+  ok(scissor and scissor[1] == 0 and scissor[2] == 0 and scissor[3] == 1000
+       and scissor[4] == 500,
+     "and the clip it threw under is still handed back")
+  backdropW = 160
+
+  ok(mod.exports.arenaDocked(setmetatable({ dockedHud = true },
+       { __index = BattleState })),
+     "a docked battle is read as docked")
+  package.loaded["src.ui.gen2.WideBattle"] = nil
+  ok(not mod.exports.arenaDocked(setmetatable({ dockedHud = true },
+       { __index = BattleState })),
+     "and a build without WideBattle.docked is read as not docked")
+  BattleState.wideLayout = wasWide
 end
 
 do
@@ -1660,6 +1948,119 @@ do
   love.graphics.newShader, love.graphics.draw = realNew, realDraw
   love.graphics.setColor = realColor
   package.loaded["src.world.gen2.Palettes"] = nil
+end
+
+do
+  io.write("BATTLE BG = WORLD: beside the message box, the art's own floor\n")
+  -- Every 304-wide scene the mod ships ends in a flat band 40 rows tall --
+  -- the rows under the cart's message box -- and the bars stop above it (see
+  -- measureBand).  On the 4:3 screen of the report that leaves the bottom of
+  -- each side bar, beside the message box, to whatever is under it.  On WORLD
+  -- that was the overworld again, under a hard edge where the forest stops.
+  -- It gets the colour every other setting gives it; only the bars the
+  -- picture never covers are the world's.
+  --
+  -- A fresh load, so the band is measured off a decoded file the way it is
+  -- in play: the shared harness's images are all cached unbanded by now.
+  local realNewImageData = love.image.newImageData
+  love.image.newImageData = function(a, b)
+    if type(a) == "string" then
+      return {
+        getDimensions = function() return 304, 144 end,
+        getPixel = function(_, x, y)
+          if y >= 104 then return 0.3, 0.3, 0.3, 1 end
+          return x / 304, y / 144, 0.5, 1
+        end,
+      }
+    end
+    return realNewImageData(a, b)
+  end
+  backdropW = 304
+  local wasDims, wasScale = love.graphics.getDimensions,
+    BattleState.battlePanelScale
+  love.graphics.getDimensions = function() return 640, 480 end
+  BattleState.battlePanelScale = function(_, w, h)
+    return math.max(1, math.floor(math.min(w / 160, h / 144)))
+  end
+
+  local banded = { id = mod.id, path = mod.path, exports = {}, stored = {},
+                   hooked = {}, events_on = {}, logged = {} }
+  for k, v in pairs(mod) do if banded[k] == nil then banded[k] = v end end
+  banded.options = {
+    define = function() end,
+    get = function(_, key) return banded.stored[key] end,
+    set = function(_, key, value) banded.stored[key] = value end,
+  }
+  banded.hooks = { wrap = function(_, name, fn) banded.hooked[name] = fn end }
+  banded.events = { on = function(_, name, fn) banded.events_on[name] = fn end }
+  BattleState.__gen1arena = nil
+  BattleState.drawScene = function(self, bodyFn)
+    drawn[#drawn + 1] = "scene"
+    if bodyFn then bodyFn() else self:drawPanel() end
+  end
+  load_("main.lua", banded)
+  banded.events_on["game.ready"]({ game = {} })
+  local hook = banded.hooked["render.letterbox"]
+
+  local payload = { ww = 640, wh = 480, ox = 80, oy = 24, vpw = 480,
+                    vph = 432, scale = 3, dpiX = 1, dpiY = 1 }
+  local function letterboxed(self)
+    frame(self)
+    local f0, d0 = #fills, #draws
+    hook(function() end, payload)
+    return barsSince(f0, d0)
+  end
+
+  local self = screen({ drawsPics = false })
+  self.bgMode = function() return "world" end
+  letterboxed(self)                       -- learns there are side bars
+  local painted, pictures = letterboxed(self)
+  eq(#pictures, 2, "the picture goes into both side bars")
+  eq(pictures[1] and pictures[1].a and pictures[1].a.h, 104,
+     "down to the top of its band, as on every other setting")
+  eq(#painted, 2, "the two strips under that are painted")
+  local left, right = painted[1], painted[2]
+  ok(left and left.x == 0 and left.w == 80 and left.y == 24 + 104 * 3
+       and left.h == 40 * 3,
+     "the left one exactly the band's rows beside the field")
+  ok(right and right.x == 560 and right.w == 80 and right.y == 336
+       and right.h == 120,
+     "and the right one")
+  ok(left and isBlack(left) and right and isBlack(right),
+     "in the surround's own black, never the overworld under a seam")
+
+  self.bgMode = function() return "white" end
+  painted, pictures = letterboxed(self)
+  eq(#painted, 8, "WHITE answers for all eight bars, as before")
+  eq(#pictures, 2, "with the same picture in the sides")
+
+  -- The wide layout on a 16:9 window: the 304-wide art is the surface, so the
+  -- side bars are outside its footprint altogether.  Its band is beside the
+  -- message box all the same, and on WORLD none of that is the picture's to
+  -- paint: the strip under the band stops at the picture's own columns.
+  local wasWide = BattleState.wideLayout
+  BattleState.wideLayout = function() return true end
+  love.graphics.getDimensions = function() return 1600, 900 end
+  BattleState.battlePanelScale = function(_, w, h)
+    return math.max(1, math.floor(math.min(w / 304, h / 144)))
+  end
+  payload = { ww = 1600, wh = 900, ox = 320, oy = 18, vpw = 960, vph = 864,
+              scale = 6, dpiX = 1, dpiY = 1 }
+  self.bgMode = function() return "world" end
+  letterboxed(self)
+  painted, pictures = letterboxed(self)
+  eq(#painted + #pictures, 0,
+     "WORLD, wide: the side bars beside the message box are the world's, "
+     .. "not black -- the picture never reaches them")
+  self.bgMode = function() return "white" end
+  painted = letterboxed(self)
+  eq(#painted, 8, "and WHITE still answers for every bar there")
+  BattleState.wideLayout = wasWide
+
+  love.image.newImageData = realNewImageData
+  love.graphics.getDimensions = wasDims
+  BattleState.battlePanelScale = wasScale
+  backdropW = 160
 end
 
 io.write(("arena gen2 paper: %d passed, %d failed\n"):format(passed, failed))

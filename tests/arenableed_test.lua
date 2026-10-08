@@ -247,6 +247,28 @@ do
   ok(whole, "and between them they leave no paper: " .. tostring(why))
 end
 
+io.write("a docked battle: only the two sides\n")
+do
+  -- BATTLE HUD = EXTENDED on Gold docks the HUD and the bottom strip into
+  -- what would be the bars above and below; see `dockedNow`.  The same
+  -- 1000x700 window as above.
+  local view = { ww = 1000, wh = 700, ox = 44, oy = 134, vpw = 912, vph = 432 }
+  local rects = bleedRects(view, true)
+  local b = by(rects)
+  eq(#rects, 2, "two bars")
+  ok(b.left and b.right, "one either side")
+  ok(not b.top and not b.bottom, "none above or below the surface")
+  ok(not b.tl and not b.tr and not b.bl and not b.br, "and no corners")
+  eq(b.left.y, 0, "each from the top of the window")
+  eq(b.left.h, 700, "to the bottom")
+  eq(b.left.w, 44, "the left one up to the surface")
+  eq(b.right.x, 956, "the right one from its far edge")
+  eq(b.right.w, 44, "to the window's")
+  eq(#bleedRects({ ww = 912, wh = 700, ox = 0, oy = 134, vpw = 912,
+                   vph = 432 }, true), 0,
+     "and a docked surface as wide as the window has no bars at all")
+end
+
 io.write("a surface that fills the window edge to edge\n")
 do
   local view = { ww = 912, wh = 432, ox = 0, oy = 0, vpw = 912, vph = 432 }
@@ -432,9 +454,12 @@ do
   ok(text:find("local v1 = math.min(floorV, (r.y + r.h - dy) / sy)",
                 1, true) ~= nil,
      "and every bar's source rectangle stops there")
-  ok(text:find("surfW or 0, surfH or 0, floorV)", 1, true) ~= nil,
+  ok(text:find("surfW or 0, surfH or 0, floorV,", 1, true) ~= nil,
      "with the floor in the quad cache's key, or the first backdrop's band "
      .. "would be used for every backdrop after it")
+  ok(text:find("docked and 1 or 0)", 1, true) ~= nil,
+     "and whether the battle is docked, which changes which bars there are "
+     .. "on the same view -- and the quads are cached by the bar's index")
 end
 
 -- ---------------------------------------- art bigger than the battle surface

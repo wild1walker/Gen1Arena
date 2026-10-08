@@ -1253,6 +1253,9 @@ local bleedPanel = nil
 -- ...and whether the battle that drew it is standing on the WORLD (BATTLE BG
 -- = WORLD).  See `surroundIsWorld`.
 local bleedWorld = false
+-- ...and whether it was drawn DOCKED, with its HUD out in the bars above and
+-- below it (BATTLE HUD = EXTENDED).  See `dockedNow`.
+local bleedDocked = false
 local pendingW, pendingH = OG_W, OG_H
 local outerCanvas = nil       -- the canvas bound when the battle draw began
 local consumed = false        -- the field fill has already been replaced
@@ -1654,7 +1657,7 @@ local function surfaceFit(iw, ih, surfW, surfH, view)
          (view.ox or 0) + dx * sx, (view.oy or 0) + dy * sy
 end
 
-local function coverQuads(img, iw, ih, view, rects, surfW, surfH)
+local function coverQuads(img, iw, ih, view, rects, surfW, surfH, docked)
   local sx, sy, dx, dy = surfaceFit(iw, ih, surfW, surfH, view)
   if not sx then return nil end
   local scale = sx
@@ -1662,9 +1665,12 @@ local function coverQuads(img, iw, ih, view, rects, surfW, surfH)
   -- screen those rows are under the cart's message box, in the wings there is
   -- no message box, and a slab of flat colour is not scenery.
   local floorV = pictureBottom(img) or ih
-  local key = ("%d:%d:%d:%d:%d:%d:%d:%d:%d")
+  -- `docked` is in the key because it changes which bars there are on the
+  -- same view (see bleedRects), and the quads are cached by the bar's index.
+  local key = ("%d:%d:%d:%d:%d:%d:%d:%d:%d:%d")
     :format(view.ww or 0, view.wh or 0, view.ox or 0, view.oy or 0,
-            view.vpw or 0, view.vph or 0, surfW or 0, surfH or 0, floorV)
+            view.vpw or 0, view.vph or 0, surfW or 0, surfH or 0, floorV,
+            docked and 1 or 0)
   local cached = quadCache[img]
   -- Every value the caller needs, on the cached path too.  Dropping `sy` here
   -- made the FIRST frame right and every frame after it throw -- inside the
@@ -1707,7 +1713,12 @@ end
 -- here -- a bar an edge short, a corner left as paper, a rectangle with a
 -- negative width -- and none of it needs a window to check.  tests/
 -- arenableed_test.lua drives it directly.
-local function bleedRects(view)
+--
+-- `docked` is a wide Gold battle with its HUD out in the bars above and below
+-- it (see `dockedNow`).  Those two are not surround, they are the battle's own
+-- HUD on the engine's own paper, so the bars are only the two either side of
+-- the surface, each the full height of the window.
+local function bleedRects(view, docked)
   if type(view) ~= "table" then return nil end
   local ox, oy = view.ox or 0, view.oy or 0
   local vpw, vph = view.vpw or 0, view.vph or 0
@@ -1721,6 +1732,12 @@ local function bleedRects(view)
     if w > 0 and h > 0 then
       out[#out + 1] = { slice = slice, x = x, y = y, w = w, h = h }
     end
+  end
+
+  if docked then
+    add("left", 0, 0, ox, wh)
+    add("right", ox + vpw, 0, right, wh)
+    return out
   end
 
   -- The four sides first, each the full length of the surface it borders,
@@ -1854,7 +1871,28 @@ local function panelRect(state, surfW, surfH)
      or type(Chrome.fitOriginFor) ~= "function" then
     return nil
   end
-  local ww, wh = love.graphics.getDimensions()
+  -- The size Game2 handed drawScene, which this runs inside.  That is the
+  -- window only when nothing else claims it: a viewport layout
+  -- (render.viewport) draws the game into a canvas of its own, a touch skin
+  -- with a screen cutout draws it into the cutout, and FAITHFUL RATIO into
+  -- its box -- and the battle is placed in THAT (src/core/Game2.lua,
+  -- `drawContained`), and so are the bars.  `Playfield.dimensions()` is the
+  -- engine's own answer while a frame is inside one, and the viewport's or
+  -- the window's when it is not.
+  local ww, wh
+  for _, name in ipairs({ "src.render.Playfield", "src.render.GameViewport" }) do
+    local okM, M = pcall(require, name)
+    if okM and type(M) == "table" and type(M.dimensions) == "function" then
+      local okD, vw, vh = pcall(M.dimensions)
+      if okD and type(vw) == "number" and type(vh) == "number" then
+        ww, wh = vw, vh
+        break
+      end
+    end
+  end
+  if not (type(ww) == "number" and type(wh) == "number") then
+    ww, wh = love.graphics.getDimensions()
+  end
   if not (ww and wh and ww > 0 and wh > 0) then return nil end
   local okS, scale = pcall(state.battlePanelScale, state, ww, wh)
   if not okS or type(scale) ~= "number" or scale <= 0 then return nil end
@@ -1913,6 +1951,17 @@ end
 -- So the question is put to the battle itself, which is where the engine
 -- keeps the answer: `BattleState:bgMode()` is what Game2 asks to decide
 -- whether to draw the world at all.
+--
+-- What it decides is only the part the picture never covers.  0.37.0 handed
+-- the WHOLE surround to the world, and that took the backdrop out of the side
+-- bars as well -- reported from a 4:3 handheld as *"I can't make the edges get
+-- covered up by the arena background anymore"*, with the dimmed overworld
+-- showing either side of a forest.  Those bars are what EDGE TO EDGE is for,
+-- and on the classic layout the wide art reaches them.  So on WORLD the
+-- picture still goes wherever it reaches, its own footprint reads as it does
+-- on every other setting (see bleedInto for the strip under its band), and
+-- the world keeps everything else -- above and below the battle, where 0.34.0
+-- put black.  EDGE TO EDGE off leaves every bar to the world.
 local function surroundIsWorld(state)
   if not gen2() or type(state) ~= "table" then return false end
   if type(state.bgMode) ~= "function" then return false end
@@ -1922,23 +1971,54 @@ end
 
 mod.exports.arenaSurroundIsWorld = surroundIsWorld
 
+-- ------- BATTLE HUD = EXTENDED, on Gold
+--
+-- A wide battle with the extended HUD is drawn DOCKED (src/ui/gen2/
+-- WideBattle.lua, `WideBattle.docked` and `drawDocked`): the engine paints a
+-- paper column the full height of the playfield, lifts the enemy's HUD to the
+-- top of it and drops the bottom strip -- the message box, FIGHT, the moves --
+-- to its bottom edge.  On a 16:9 window that is 18 rows up and 18 rows down,
+-- right out of the surface and into what the payload calls the bars.
+--
+-- So above and below a docked battle is not surround, it is the battle's HUD,
+-- and painting the bars there put black over the HUD and the menus.  The bars
+-- of a docked battle are the two either side of the column; see bleedRects.
+-- Asked through the engine's own predicate, at the moment the battle draws,
+-- for the same reason as `panelRect`: it is the only moment the live battle
+-- is in hand, and docking changes with the stack (a menu over the battle
+-- undocks it).
+local function dockedNow(state)
+  if not gen2() or type(state) ~= "table" then return false end
+  local ok, WideBattle = pcall(require, "src.ui.gen2.WideBattle")
+  if not ok or type(WideBattle) ~= "table"
+     or type(WideBattle.docked) ~= "function" then
+    return false
+  end
+  local okD, docked = pcall(WideBattle.docked, state)
+  return okD and docked == true
+end
+
+mod.exports.arenaDocked = dockedNow
+
 local function bleedInto(view)
   local img = bleedImage
-  local panel, world = bleedPanel, bleedWorld
+  local panel, world, docked = bleedPanel, bleedWorld, bleedDocked
   local tint = bleedTint
   bleedTint = nil
   -- Claimed, not read: the hook runs once per frame after the battle drew,
   -- and a frame with no battle draw in it must not inherit the last one's
   -- picture.  Clearing on the way past is what makes that true without a
   -- frame counter.
-  bleedImage, bleedPanel, bleedWorld = nil, nil, false
+  bleedImage, bleedPanel, bleedWorld, bleedDocked = nil, nil, false, false
   if not img then return end
+  local edge = mod.options:get("bleed") ~= false
   -- BATTLE BG = WORLD on Gold.  The overworld is already drawn round the
   -- battle and dimmed by the engine, and that is what the player asked to
-  -- see there -- so the bars are left to it, exactly as the `worldActive`
-  -- test below leaves them on Red.  Asked of the battle rather than of the
-  -- payload because Gold's payload cannot say: see `surroundIsWorld`.
-  if world then return end
+  -- see there wherever the picture is not -- so with EDGE TO EDGE off the
+  -- bars are left to it, exactly as the `worldActive` test below leaves them
+  -- on Red.  Asked of the battle rather than of the payload because Gold's
+  -- payload cannot say: see `surroundIsWorld`.
+  if world and not edge then return end
   -- The rectangle this whole file is about.  `panelRect` asked the engine
   -- where the battle really went; the payload only knows where a classic
   -- panel would have gone.  Everything else in the payload -- the window,
@@ -1965,10 +2045,10 @@ local function bleedInto(view)
   -- either.
   if faithfulLocked() then return end
 
-  local rects = bleedRects(view)
+  local rects = bleedRects(view, docked)
   if not rects or not rects[1] then return end
 
-  if mod.options:get("bleed") == false then
+  if not edge then
     local r, g, b = barColor()
     -- Inside the guard like every other full-colour paint in this file: the
     -- palette shader answers a pixel by its RED channel, so a flat black fill
@@ -1987,18 +2067,39 @@ local function bleedInto(view)
 
   local iw, ih = img:getDimensions()
   if iw <= 0 or ih <= 0 then return end
-  local cut, sx, _, dy, sy = coverQuads(img, iw, ih, view, rects, bleedW, bleedH)
+  local cut, sx, dx, dy, sy = coverQuads(img, iw, ih, view, rects, bleedW,
+                                         bleedH, docked)
   if not cut then return end
 
   -- The bars the picture cannot reach get the surround's own colour first, so
   -- a picture that does not span the whole window leaves the engine's black
   -- rather than a stretched smear of itself.
-  local r0, g0, b0 = barColor()
+  --
+  -- On WORLD that surround is the world, already drawn, so it keeps every
+  -- part of the bars the picture never covers.  What it does not get is the
+  -- part the picture DOES cover but is cut off from: the flat band under the
+  -- message box (see measureBand), which `coverQuads` stops each bar above.
+  -- Left to the world, that is a block of overworld tiles beside the message
+  -- box, under a hard edge where the art stops -- on the 4:3 screen of the
+  -- report, the bottom quarter of each side bar.  It gets the colour every
+  -- other setting gives it, so the picture's own footprint reads the same on
+  -- WORLD as anywhere else and only the world is round it.
+  local band = world and pictureBottom(img) or nil
   local g = love.graphics
+  local r0, g0, b0 = barColor()
   withoutShader(function()
     g.setColor(r0, g0, b0, 1)
     for _, r in ipairs(rects) do
-      realRectangle("fill", r.x, r.y, r.w, r.h)
+      local x0, y0, x1, y1 = r.x, r.y, r.x + r.w, r.y + r.h
+      if world then
+        -- the picture's footprint below its band, or nothing at all
+        x0, x1 = math.max(x0, dx), math.min(x1, dx + iw * sx)
+        y0 = math.max(y0, dy + (band or ih) * sy)
+        y1 = math.min(y1, dy + ih * sy)
+      end
+      if x1 > x0 and y1 > y0 then
+        realRectangle("fill", x0, y0, x1 - x0, y1 - y0)
+      end
     end
     g.setColor(1, 1, 1, 1)
   end)
@@ -3831,9 +3932,40 @@ local function installGen2()
 
     -- Down FIRST, on the surface the scene composites onto, so an attack's
     -- scanline scroll moves the panel over it instead of moving it.
+    --
+    -- Inside the surface.  Every layout but one draws the scene inside its
+    -- panel's clip already; a DOCKED battle (see `dockedNow`) clips each of
+    -- `drawDocked`'s groups instead and nothing round the scene, so a picture
+    -- cover-scaled past the surface -- the 256-wide route art on the 304-wide
+    -- one -- ran 13 rows above and below it, onto the paper column the HUD is
+    -- docked on.
+    local docked = wide and dockedNow(self) or false
     local okPaint, paintProblem = pcall(function()
-      paintField()
-      veilOver(self)
+      local G = love.graphics
+      local clipped, cx, cy, cw, ch = false, nil, nil, nil, nil
+      if docked and G.transformPoint and G.intersectScissor
+         and G.getScissor and G.setScissor then
+        -- Rounded the way the engine rounds its own clips (Chrome.clipTo):
+        -- a scissor is whole pixels, LÖVE truncates what it is handed, and a
+        -- FILL scale puts the surface's edge between two -- truncated, that
+        -- is a line of the paper column down the field's right edge.
+        local x0, y0 = G.transformPoint(0, 0)
+        local x1, y1 = G.transformPoint(width, height)
+        cx, cy, cw, ch = G.getScissor()
+        G.intersectScissor(math.floor(math.min(x0, x1)),
+                           math.floor(math.min(y0, y1)),
+                           math.ceil(math.abs(x1 - x0)),
+                           math.ceil(math.abs(y1 - y0)))
+        clipped = true
+      end
+      local okIn, problemIn = pcall(function()
+        paintField()
+        veilOver(self)
+      end)
+      if clipped then
+        if cx then G.setScissor(cx, cy, cw, ch) else G.setScissor() end
+      end
+      if not okIn then error(problemIn, 0) end
     end)
     if not okPaint then
       mod.log:warn("the field was not painted: %s", tostring(paintProblem))
@@ -3861,6 +3993,7 @@ local function installGen2()
     -- payload describes a classic panel and this one does not.
     bleedPanel = panelRect(self, width, height)
     bleedWorld = surroundIsWorld(self)
+    bleedDocked = docked
     lastPanel = bleedPanel
     -- What UI THEME needs to know about this frame, on the instance rather
     -- than through an export, because it is a fact about ONE battle screen
